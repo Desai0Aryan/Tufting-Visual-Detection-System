@@ -1,4 +1,4 @@
-#!/Users/aryandesai/Downloads/Tufting-Visual-Detection-System/venv/bin/python3.14
+#!/Users/aryandesai/Downloads/Projects/Tufting-Visual-Detection-System/venv/bin/python3.14
 import sys
 from pip._internal.cli.main import main
 if __name__ == '__main__':

@@ -1,0 +1,10 @@
+git clone 
+cd Tufting-Visual-Detection-System
+
+python3 -m venv venv
+source venv/bin/activate
+
+python -m pip install --upgrade pip
+python -m pip install -r Requirements.txt
+
+python main.py --image samples/sample_tufts.jpg --outdir outputs

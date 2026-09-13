@@ -1,13 +1,2 @@
-# Environment
-.env
-venv/
-__pycache__/
-*.pyc
- 
-# Outputs
-output/
-*.mp4.tmp
- 
-# OS
-.DS_Store
- 
+# Created by venv; see https://docs.python.org/3/library/venv.html
+*

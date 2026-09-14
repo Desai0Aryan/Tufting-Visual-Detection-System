@@ -13,7 +13,6 @@ class ImageLoadError(Exception):
 def load_image(path: str) -> np.ndarray:
     """
     Load an image from disk as a BGR numpy array (OpenCV convention).
-    Raises ImageLoadError if the file doesn't exist or can't be decoded.
     """
     p = Path(path)
     if not p.exists():
@@ -70,9 +69,6 @@ def save_image(image: np.ndarray, path: str) -> None:
 def annotate_info_banner(image: np.ndarray, text: str) -> np.ndarray:
     """
     Draw a small text banner in the top-left corner of a copy of the image.
-    Used in Step 1 purely to prove the load -> process -> save pipeline
-    works end to end; later steps replace this with real overlays
-    (axes, tuft markers, vectors).
     """
     out = image.copy()
     cv2.rectangle(out, (0, 0), (out.shape[1], 34), (0, 0, 0), thickness=-1)

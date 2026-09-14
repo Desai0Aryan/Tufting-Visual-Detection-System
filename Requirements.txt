@@ -1,9 +1,9 @@
-Tufting Visual Detection System - dependencies
-
-opencv-python : video I/O, frame processing, blob/contour detection, drawing overlays
-numpy         : array math, vector operations
-pandas        : structuring and exporting the vector time history (CSV)
-scipy         : tuft-to-tuft frame matching (KDTree / linear_sum_assignment),
+# Tufting Visual Detection System - dependencies
+#
+# opencv-python : video I/O, frame processing, blob/contour detection, drawing overlays
+# numpy         : array math, vector operations
+# pandas        : structuring and exporting the vector time history (CSV)
+# scipy         : tuft-to-tuft frame matching (KDTree / linear_sum_assignment),
 
 opencv-python>=4.9
 numpy>=1.26

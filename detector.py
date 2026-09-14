@@ -40,13 +40,22 @@ class TuftDetector:
         self.min_aspect_ratio = min_aspect_ratio
         self.min_length_px = min_length_px
         self.max_length_px = max_length_px
+        if not isinstance(block_size, int) or block_size <= 1 or block_size % 2 == 0:
+            raise ValueError("block_size must be an odd integer greater than 1")
+        if min_area < 0 or max_area <= min_area:
+            raise ValueError("max_area must be greater than min_area >= 0")
+        if min_length_px < 0 or max_length_px <= min_length_px:
+            raise ValueError("max_length_px must be greater than min_length_px >= 0")
+        if min_aspect_ratio <= 0:
+            raise ValueError("min_aspect_ratio must be greater than 0")
+
         self.block_size = block_size
         self.c = c
         self.roi = roi
 
     def _threshold(self, gray):
         blurred = cv2.GaussianBlur(gray, (5, 5), 0)
-        block_size = self.block_size | 1  # adaptiveThreshold requires odd block size
+        block_size = self.block_size
         thresh = cv2.adaptiveThreshold(
             blurred, 255,
             cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
@@ -92,8 +101,16 @@ class TuftDetector:
 
     def detect(self, image):
         """Detect tufts in a BGR (or grayscale) image and return a list of Tuft."""
+        if image is None or not hasattr(image, "shape") or image.size == 0:
+            raise ValueError("image must be a non-empty numpy array")
+
         if self.roi is not None:
             x, y, w, h = self.roi
+            height, width = image.shape[:2]
+            if x < 0 or y < 0 or w <= 0 or h <= 0 or x + w > width or y + h > height:
+                raise ValueError(
+                    f"ROI {self.roi} is outside the image bounds ({width}x{height})"
+                )
             work = image[y:y + h, x:x + w]
             offset = np.array([x, y], dtype=np.float32)
         else:

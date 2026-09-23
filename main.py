@@ -85,13 +85,19 @@ def _build_parser() -> argparse.ArgumentParser:
                         help="Maximum dimension for the preprocessing preview")
     parser.add_argument("--min-area", type=float, default=15)
     parser.add_argument("--max-area", type=float, default=600)
-    parser.add_argument("--min-aspect-ratio", type=float, default=5.5)
+    parser.add_argument("--min-elongation", type=float, default=2.0,
+                        help="Minimum perimeter^2/(4*pi*area); curl-tolerant "
+                             "elongation threshold (replaces bounding-box aspect ratio)")
     parser.add_argument("--min-length-px", type=float, default=12)
     parser.add_argument("--max-length-px", type=float, default=110)
     parser.add_argument("--block-size", type=int, default=25,
                         help="Adaptive threshold block size (odd, > 1)")
     parser.add_argument("--c", type=float, default=5,
                         help="Adaptive threshold constant subtracted from the mean")
+    parser.add_argument("--clahe-clip", type=float, default=3.0,
+                        help="CLAHE clip limit for local contrast normalization")
+    parser.add_argument("--clahe-tile", type=int, default=8,
+                        help="CLAHE tile grid size (NxN) for local contrast normalization")
     return parser
 
 
@@ -113,8 +119,8 @@ def parse_args(argv=None):
         parser.error("--max-area must be greater than --min-area >= 0")
     if args.min_length_px < 0 or args.max_length_px <= args.min_length_px:
         parser.error("--max-length-px must be greater than --min-length-px >= 0")
-    if args.min_aspect_ratio <= 0:
-        parser.error("--min-aspect-ratio must be greater than 0")
+    if args.min_elongation <= 0:
+        parser.error("--min-elongation must be greater than 0")
     return args
 
 
@@ -195,11 +201,13 @@ def main(argv=None):
     detector = TuftDetector(
         min_area=args.min_area,
         max_area=args.max_area,
-        min_aspect_ratio=args.min_aspect_ratio,
+        min_elongation=args.min_elongation,
         min_length_px=args.min_length_px,
         max_length_px=args.max_length_px,
         block_size=args.block_size,
         c=args.c,
+        clahe_clip=args.clahe_clip,
+        clahe_tile=args.clahe_tile,
         roi=roi,
     )
     tufts = detector.detect(image)

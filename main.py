@@ -1,10 +1,10 @@
 """CLI entry point for image loading, tuft detection, and vector export.
 
 Examples:
-    python main.py --image samples/sample_tufts1.jpg
-    python main.py samples/sample_tufts1.jpg --outdir outputs
-    python main.py --image samples/sample_tufts1.jpg --roi 100,120,400,250
-    python main.py --image samples/sample_tufts1.jpg --select-roi
+    python main.py --image Images/sample_tufts1.jpg
+    python main.py Images/sample_tufts1.jpg --outdir outputs
+    python main.py --image Images/sample_tufts1.jpg --roi 100,120,400,250
+    python main.py --image Images/sample_tufts1.jpg --select-roi
 
 The detector runs on the original-resolution image. A resized copy is used only
 for the preprocessing preview, so exported pixel coordinates always match the

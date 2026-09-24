@@ -1,29 +1,27 @@
-git clone <repository-url>
-cd Tufting-Visual-Detection-System
-
-python3 -m venv venv
-source venv/bin/activate
+cd "/Users/aryandesai/Downloads/Projects/Tufting-Visual-Detection-System"
+python3 -m venv .venv
+. .venv/bin/activate
 
 python -m pip install --upgrade pip
 python -m pip install -r Requirements.txt
 
-#Run automated tests:
+# Run the detector on the sample image
+python main.py --image Images/sample_tufts1.jpg --outdir output
+
+# Run automated tests
 python -m unittest discover -s tests -v
 
-#Full image pipeline: preprocess preview + tuft detection + annotated image + CSV:
-python main.py --image samples/sample_tufts1.jpg --outdir outputs
+# Run the detector on another sample image
+python main.py --image Images/Tufts.jpg --outdir output
 
-#Legacy positional form is still supported
-python main.py samples/sample_tufts1.jpg --out-dir outputs
+# Legacy positional form is still supported
+python main.py Images/sample_tufts1.jpg --out-dir output
 
-#Restrict detection to a pixel ROI:
-python main.py --image samples/sample_tufts1.jpg --roi 100,120,400,250 --outdir outputs
+# Restrict detection to a pixel ROI
+python main.py --image Images/sample_tufts1.jpg --roi 100,120,400,250 --outdir output
 
-#Select an ROI interactively:
-python main.py --image samples/sample_tufts1.jpg --select-roi --outdir outputs
+# Select an ROI interactively
+python main.py --image Images/sample_tufts1.jpg --select-roi --outdir output
 
-#Test the second sample image:
-python main.py --image samples/sample_tufts.jpg --outdir outputs
-
-#Inspect the latest vector CSV:
-python -c "import pandas as pd, glob; f=sorted(glob.glob('outputs/*_vectors.csv'))[-1]; df=pd.read_csv(f); print(f); print(df.head()); print('Rows:', len(df)); print('Columns:', list(df.columns))"
+# Inspect the latest vector CSV
+python -c "import pandas as pd, glob; f=sorted(glob.glob('output/*_vectors.csv'))[-1]; df=pd.read_csv(f); print(f); print(df.head()); print('Rows:', len(df)); print('Columns:', list(df.columns))"

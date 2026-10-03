@@ -1,0 +1,8 @@
+# Extra packages for Part 2 (U-Net training / SAM 2 labelling). Install after Requirements.txt.
+# Pick the torch build for your machine at https://pytorch.org/get-started/locally/
+torch>=2.2
+huggingface_hub>=0.24
+
+# SAM 2 (only needed for tools/autolabel.py --labeler sam2). Check the repo README for the
+# current install line and checkpoint names: https://github.com/facebookresearch/sam2
+#   pip install git+https://github.com/facebookresearch/sam2.git

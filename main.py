@@ -78,6 +78,8 @@ def _build_parser() -> argparse.ArgumentParser:
                         help="Mask source: classical threshold code or a trained U-Net")
     parser.add_argument("--weights", default=None,
                         help="U-Net checkpoint (.pt); required with --backend unet")
+    parser.add_argument("--threshold", type=float, default=0.5,
+                        help="U-Net tuft probability threshold (0..1; default: 0.5)")
     parser.add_argument("--vector-mode", choices=list(VECTOR_MODES), default="chord",
                         help="chord = root->tip; base = root->midpoint (ignores hooked "
                              "tip); tip = local tangent at the free end")
@@ -116,6 +118,8 @@ def parse_args(argv=None):
 
     if args.max_dim <= 0:
         parser.error("--max-dim must be greater than 0")
+    if not 0.0 <= args.threshold <= 1.0:
+        parser.error("--threshold must be between 0 and 1")
     if args.block_size <= 1 or args.block_size % 2 == 0:
         parser.error("--block-size must be an odd integer greater than 1")
     if args.min_area < 0 or args.max_area <= args.min_area:
@@ -193,7 +197,7 @@ def main(argv=None):
             clahe_clip=args.clahe_clip, clahe_tile=args.clahe_tile,
         )
     else:
-        backend = build_backend("unet", weights=args.weights)
+        backend = build_backend("unet", weights=args.weights, threshold=args.threshold)
 
     flow_prior = None
     if args.flow_prior_deg is not None:

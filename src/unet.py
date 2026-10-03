@@ -64,7 +64,12 @@ class UNetBackend:
     name = "unet"
 
     def __init__(self, weights, device=None, threshold=0.5, tile=768, overlap=64):
-        self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
+        if device is None:
+            mps = getattr(torch.backends, "mps", None)
+            device = ("cuda" if torch.cuda.is_available()
+                      else "mps" if mps is not None and mps.is_available()
+                      else "cpu")
+        self.device = device
         self.model = load_model(weights, self.device)
         self.threshold = threshold
         self.tile = tile

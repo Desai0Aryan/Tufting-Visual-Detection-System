@@ -1,3 +1,4 @@
+"""The Tuft record shared by every detection backend, the exporter and the overlay."""
 from dataclasses import dataclass
 from typing import Optional
 

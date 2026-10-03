@@ -16,7 +16,10 @@ class ClassicalBackend:
 
     name = "classical"
 
-    def __init__(self, block_size=25, c=5, clahe_clip=3.0, clahe_tile=8):
+    def __init__(self, block_size=25, c=5, clahe_clip=3.0, clahe_tile=8, polarity="dark"):
+        if polarity not in ("dark", "light"):
+            raise ValueError("polarity must be 'dark' (dark tufts on a light surface) or 'light'")
+        self.polarity = polarity
         if not isinstance(block_size, int) or block_size <= 1 or block_size % 2 == 0:
             raise ValueError("block_size must be an odd integer greater than 1")
         self.block_size = block_size
@@ -30,6 +33,8 @@ class ClassicalBackend:
         clahe = cv2.createCLAHE(
             clipLimit=self.clahe_clip, tileGridSize=(self.clahe_tile, self.clahe_tile)
         )
+        if self.polarity == "light":
+            gray = 255 - gray  # light tufts on a dark surface: flip so tufts are dark again
         blurred = cv2.GaussianBlur(clahe.apply(gray), (5, 5), 0)
         thresh = cv2.adaptiveThreshold(
             blurred, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY_INV,

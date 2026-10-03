@@ -6,3 +6,6 @@ venv/
 .env
 *.pt
 *.pth
+data/synthetic/
+data/*/previews/
+models/

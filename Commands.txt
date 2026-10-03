@@ -1,4 +1,4 @@
-cd "/Users/aryandesai/Downloads/Projects/Tufting-Visual-Detection-System"
+cd Tufting-Visual-Detection-System
 python3 -m venv .venv
 . .venv/bin/activate
 
@@ -25,3 +25,18 @@ python main.py --image Images/sample_tufts1.jpg --select-roi --outdir output
 
 # Inspect the latest vector CSV
 python -c "import pandas as pd, glob; f=sorted(glob.glob('output/*_vectors.csv'))[-1]; df=pd.read_csv(f); print(f); print(df.head()); print('Rows:', len(df)); print('Columns:', list(df.columns))"
+
+
+# ---- New additions ----
+# Choose how the flow vector is computed (chord | base | tip) and give the expected flow direction
+python main.py --image Images/sample_tufts1.jpg --vector-mode base --flow-prior-deg 0 --outdir output
+
+# Save the raw tuft mask the backend produced
+python main.py --image Images/sample_tufts1.jpg --save-mask --outdir output
+
+# Use a trained U-Net (needs torch; weights come from Part 2 training)
+python main.py --image Images/sample_tufts1.jpg --backend unet --weights models/tuft_unet.pt
+
+# Flow-vector accuracy on synthetic scenes with known ground truth
+python tools/benchmark_flow.py --seeds 5
+python tools/benchmark_flow.py --seeds 5 --oracle-root

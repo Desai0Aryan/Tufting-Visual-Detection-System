@@ -1,17 +1,5 @@
-"""CLI entry point for image loading, tuft detection, and vector export.
-
-Examples:
-    python main.py --image Images/sample_tufts1.jpg
-    python main.py Images/sample_tufts1.jpg --outdir outputs
-    python main.py --image Images/sample_tufts1.jpg --roi 100,120,400,250
-    python main.py --image Images/sample_tufts1.jpg --select-roi
-
-The detector runs on the original-resolution image. A resized copy is used only
-for the preprocessing preview, so exported pixel coordinates always match the
-input image.
-"""
-
 import argparse
+import math
 from datetime import datetime
 from pathlib import Path
 
@@ -19,6 +7,9 @@ import cv2
 import pandas as pd
 
 from detector import TuftDetector, draw_tufts
+from src.backends import build_backend
+from src.export import tufts_dataframe
+from src.mask_to_tufts import VECTOR_MODES
 from src.image_io import (
     ImageLoadError,
     annotate_info_banner,
@@ -83,6 +74,18 @@ def _build_parser() -> argparse.ArgumentParser:
                         help="Interactively select the ROI before detection")
     parser.add_argument("--max-dim", type=int, default=1400,
                         help="Maximum dimension for the preprocessing preview")
+    parser.add_argument("--backend", choices=["classical", "unet"], default="classical",
+                        help="Mask source: classical threshold code or a trained U-Net")
+    parser.add_argument("--weights", default=None,
+                        help="U-Net checkpoint (.pt); required with --backend unet")
+    parser.add_argument("--vector-mode", choices=list(VECTOR_MODES), default="chord",
+                        help="chord = root->tip; base = root->midpoint (ignores hooked "
+                             "tip); tip = local tangent at the free end")
+    parser.add_argument("--flow-prior-deg", type=float, default=None,
+                        help="Expected bulk flow direction in degrees (math convention, "
+                             "0 = +x/right, 90 = up). Only used to break root/tip ties.")
+    parser.add_argument("--save-mask", action="store_true",
+                        help="Also save the backend's raw tuft mask as a PNG")
     parser.add_argument("--min-area", type=float, default=15)
     parser.add_argument("--max-area", type=float, default=600)
     parser.add_argument("--min-elongation", type=float, default=2.0,
@@ -121,6 +124,8 @@ def parse_args(argv=None):
         parser.error("--max-length-px must be greater than --min-length-px >= 0")
     if args.min_elongation <= 0:
         parser.error("--min-elongation must be greater than 0")
+    if args.backend == "unet" and not args.weights:
+        parser.error("--backend unet requires --weights")
     return args
 
 
@@ -134,25 +139,9 @@ def _next_run_label(outdir: Path, stem: str) -> str:
     return label
 
 
-def _tufts_dataframe(tufts):
-    columns = [
-        "tuft_id", "root_x", "root_y", "tip_x", "tip_y",
-        "unit_vector_x", "unit_vector_y", "angle_deg", "length_px",
-    ]
-    return pd.DataFrame(
-        [
-            {
-                "tuft_id": t.id,
-                "root_x": t.root[0], "root_y": t.root[1],
-                "tip_x": t.tip[0], "tip_y": t.tip[1],
-                "unit_vector_x": t.vector[0], "unit_vector_y": t.vector[1],
-                "angle_deg": t.angle_deg,
-                "length_px": t.length_px,
-            }
-            for t in tufts
-        ],
-        columns=columns,
-    )
+def _tufts_dataframe(tufts, frame=0, timestamp_s=0.0):
+    """Kept for backwards compatibility; the schema now lives in src.export."""
+    return tufts_dataframe(tufts, frame=frame, timestamp_s=timestamp_s)
 
 
 def main(argv=None):
@@ -198,17 +187,29 @@ def main(argv=None):
         else:
             print("No ROI selected; using the full image.")
 
+    if args.backend == "classical":
+        backend = build_backend(
+            "classical", block_size=args.block_size, c=args.c,
+            clahe_clip=args.clahe_clip, clahe_tile=args.clahe_tile,
+        )
+    else:
+        backend = build_backend("unet", weights=args.weights)
+
+    flow_prior = None
+    if args.flow_prior_deg is not None:
+        rad = math.radians(args.flow_prior_deg)
+        flow_prior = (math.cos(rad), -math.sin(rad))  # image coords: y points down
+
     detector = TuftDetector(
         min_area=args.min_area,
         max_area=args.max_area,
         min_elongation=args.min_elongation,
         min_length_px=args.min_length_px,
         max_length_px=args.max_length_px,
-        block_size=args.block_size,
-        c=args.c,
-        clahe_clip=args.clahe_clip,
-        clahe_tile=args.clahe_tile,
         roi=roi,
+        backend=backend,
+        vector_mode=args.vector_mode,
+        flow_prior=flow_prior,
     )
     tufts = detector.detect(image)
     print(f"Detected {len(tufts)} tuft(s)")
@@ -216,6 +217,12 @@ def main(argv=None):
     annotated = draw_tufts(image, tufts)
     annotated_path = outdir / f"{run_label}_annotated.png"
     save_image(annotated, str(annotated_path))
+
+    if args.save_mask:
+        mask_path = outdir / f"{run_label}_mask.png"
+        save_image(backend.predict(image).tuft if roi is None else backend.predict(
+            image[roi[1]:roi[1] + roi[3], roi[0]:roi[0] + roi[2]]).tuft, str(mask_path))
+        print(f"Tuft mask:            {mask_path}")
 
     csv_path = outdir / f"{run_label}_vectors.csv"
     _tufts_dataframe(tufts).to_csv(csv_path, index=False)

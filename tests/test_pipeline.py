@@ -43,15 +43,10 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual(
             list(df.columns),
             [
-                "tuft_id",
-                "root_x",
-                "root_y",
-                "tip_x",
-                "tip_y",
-                "unit_vector_x",
-                "unit_vector_y",
-                "angle_deg",
-                "length_px",
+                "timestamp_s", "frame", "tuft_id",
+                "root_x", "root_y", "tip_x", "tip_y",
+                "unit_vector_x", "unit_vector_y", "unit_vector_z",
+                "angle_deg", "length_px", "curl", "confidence", "source",
             ],
         )
 

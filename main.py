@@ -4,11 +4,13 @@ from datetime import datetime
 from pathlib import Path
 
 import cv2
+import numpy as np
 import pandas as pd
 
 from detector import TuftDetector, draw_tufts
 from src.backends import build_backend
 from src.export import tufts_dataframe
+from src.filtering import DEFAULT_NORM_SIZE, clean_tufts, normalize_scale, rescale_tufts, scale_roi
 from src.mask_to_tufts import VECTOR_MODES
 from src.image_io import (
     ImageLoadError,
@@ -56,6 +58,16 @@ def _validate_roi(roi, image_shape):
     return roi
 
 
+def _clamp_roi(roi, shape):
+    """Rounding when an ROI is rescaled can overshoot the image by a pixel."""
+    if roi is None:
+        return None
+    x, y, w, h = roi
+    H, W = shape[:2]
+    x, y = min(max(x, 0), W - 1), min(max(y, 0), H - 1)
+    return x, y, max(1, min(w, W - x)), max(1, min(h, H - y))
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Detect tufts and flow vectors in a single image."
@@ -78,8 +90,25 @@ def _build_parser() -> argparse.ArgumentParser:
                         help="Mask source: classical threshold code or a trained U-Net")
     parser.add_argument("--weights", default=None,
                         help="U-Net checkpoint (.pt); required with --backend unet")
-    parser.add_argument("--threshold", type=float, default=0.5,
-                        help="U-Net tuft probability threshold (0..1; default: 0.5)")
+    parser.add_argument("--threshold", type=float, default=None,
+                        help="U-Net tuft probability threshold (0..1). Default: the value the "
+                             "checkpoint's own validation picked (weights.pt.json), else 0.5")
+    parser.add_argument("--polarity", choices=["dark", "light", "auto"], default="dark",
+                        help="classical backend only: dark strings on a light surface (default), "
+                             "light on dark, or auto = try both and keep the one with more tufts")
+    parser.add_argument("--norm-size", type=int, default=DEFAULT_NORM_SIZE,
+                        help="downscale big photos so the long side is at most this before "
+                             "detecting (0 = off). The size limits and the U-Net's training crops "
+                             "assume ~15-110 px tufts; use the same value you labelled/trained with")
+    parser.add_argument("--no-clean", action="store_true",
+                        help="skip the tuft-field filter that drops detections far from the main "
+                             "cluster of tufts (sky, water, insets, stray blobs)")
+    parser.add_argument("--verify-sam2", action="store_true",
+                        help="keep only tufts SAM 2 can independently segment as a compact "
+                             "string-like object (needs the sam2 package; slower)")
+    parser.add_argument("--sam2-model", default="facebook/sam2.1-hiera-small")
+    parser.add_argument("--sam2-config", default=None)
+    parser.add_argument("--sam2-checkpoint", default=None)
     parser.add_argument("--vector-mode", choices=list(VECTOR_MODES), default="chord",
                         help="chord = root->tip; base = root->midpoint (ignores hooked "
                              "tip); tip = local tangent at the free end")
@@ -118,8 +147,10 @@ def parse_args(argv=None):
 
     if args.max_dim <= 0:
         parser.error("--max-dim must be greater than 0")
-    if not 0.0 <= args.threshold <= 1.0:
+    if args.threshold is not None and not 0.0 <= args.threshold <= 1.0:
         parser.error("--threshold must be between 0 and 1")
+    if args.norm_size < 0:
+        parser.error("--norm-size must be >= 0")
     if args.block_size <= 1 or args.block_size % 2 == 0:
         parser.error("--block-size must be an odd integer greater than 1")
     if args.min_area < 0 or args.max_area <= args.min_area:
@@ -191,31 +222,61 @@ def main(argv=None):
         else:
             print("No ROI selected; using the full image.")
 
-    if args.backend == "classical":
-        backend = build_backend(
-            "classical", block_size=args.block_size, c=args.c,
-            clahe_clip=args.clahe_clip, clahe_tile=args.clahe_tile,
-        )
-    else:
-        backend = build_backend("unet", weights=args.weights, threshold=args.threshold)
+    # Detect on a canonically-scaled copy, then map results back to original pixels.
+    work, scale = normalize_scale(image, args.norm_size)
+    work_roi = _clamp_roi(scale_roi(roi, scale), work.shape)
+    if scale != 1.0:
+        print(f"  Detecting at {work.shape[1]}x{work.shape[0]} (scale {scale:.3f}); "
+              f"results are mapped back to the original image")
 
     flow_prior = None
     if args.flow_prior_deg is not None:
         rad = math.radians(args.flow_prior_deg)
         flow_prior = (math.cos(rad), -math.sin(rad))  # image coords: y points down
 
-    detector = TuftDetector(
-        min_area=args.min_area,
-        max_area=args.max_area,
-        min_elongation=args.min_elongation,
-        min_length_px=args.min_length_px,
-        max_length_px=args.max_length_px,
-        roi=roi,
-        backend=backend,
-        vector_mode=args.vector_mode,
-        flow_prior=flow_prior,
-    )
-    tufts = detector.detect(image)
+    def run(backend):
+        detector = TuftDetector(
+            min_area=args.min_area, max_area=args.max_area,
+            min_elongation=args.min_elongation,
+            min_length_px=args.min_length_px, max_length_px=args.max_length_px,
+            roi=work_roi, backend=backend, vector_mode=args.vector_mode,
+            flow_prior=flow_prior,
+        )
+        found = detector.detect(work)
+        raw_count = len(found)
+        if not args.no_clean:
+            found = clean_tufts(work, found)
+        return backend, found, raw_count
+
+    if args.backend == "classical":
+        pols = ("dark", "light") if args.polarity == "auto" else (args.polarity,)
+        runs = [run(build_backend(
+            "classical", block_size=args.block_size, c=args.c,
+            clahe_clip=args.clahe_clip, clahe_tile=args.clahe_tile, polarity=pol))
+            for pol in pols]
+        backend, tufts, raw_count = max(runs, key=lambda r: len(r[1]))
+        if len(pols) > 1:
+            print(f"  Polarity auto-selected: {backend.polarity}")
+    else:
+        backend, tufts, raw_count = run(
+            build_backend("unet", weights=args.weights, threshold=args.threshold))
+        print(f"  U-Net threshold: {backend.threshold:.2f}")
+
+    if not args.no_clean:
+        print(f"  Tuft-field filter: {raw_count} -> {len(tufts)}")
+
+    if args.verify_sam2 and tufts:
+        from src.sam2_labeler import load_sam2_predictor, verify_tufts_with_sam
+        predictor = load_sam2_predictor(args.sam2_model, config=args.sam2_config,
+                                        checkpoint=args.sam2_checkpoint)
+        before = len(tufts)
+        tufts, sam_stats = verify_tufts_with_sam(work, tufts, predictor)
+        print(f"  SAM 2 verification: {before} -> {len(tufts)} "
+              f"({sam_stats['rejected']} rejected)")
+
+    tufts = rescale_tufts(tufts, 1.0 / scale)
+    for i, t in enumerate(tufts):
+        t.id = i
     print(f"Detected {len(tufts)} tuft(s)")
 
     annotated = draw_tufts(image, tufts)
@@ -224,8 +285,18 @@ def main(argv=None):
 
     if args.save_mask:
         mask_path = outdir / f"{run_label}_mask.png"
-        save_image(backend.predict(image).tuft if roi is None else backend.predict(
-            image[roi[1]:roi[1] + roi[3], roi[0]:roi[0] + roi[2]]).tuft, str(mask_path))
+        crop = work if work_roi is None else work[
+            work_roi[1]:work_roi[1] + work_roi[3], work_roi[0]:work_roi[0] + work_roi[2]]
+        m = backend.predict(crop).tuft
+        full = np.zeros(work.shape[:2], np.uint8)
+        m8 = (m > 127).astype(np.uint8) * 255 if m.dtype == np.uint8 else (m >= 0.5).astype(np.uint8) * 255
+        if work_roi is None:
+            full = m8
+        else:
+            full[work_roi[1]:work_roi[1] + work_roi[3], work_roi[0]:work_roi[0] + work_roi[2]] = m8
+        if scale != 1.0:
+            full = cv2.resize(full, (image.shape[1], image.shape[0]), interpolation=cv2.INTER_NEAREST)
+        save_image(full, str(mask_path))
         print(f"Tuft mask:            {mask_path}")
 
     csv_path = outdir / f"{run_label}_vectors.csv"

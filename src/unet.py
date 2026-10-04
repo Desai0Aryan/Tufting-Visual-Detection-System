@@ -1,3 +1,6 @@
+import json
+from pathlib import Path
+
 import cv2
 import numpy as np
 import torch
@@ -60,10 +63,23 @@ def load_model(weights, device="cpu"):
     return model.to(device).eval()
 
 
+def suggested_threshold(weights, default=0.5):
+    """The threshold the checkpoint's own validation picked (written by train_unet.py
+    to <weights>.json). Falling back to 0.5 silently was a common source of
+    over/under-detection because the best value is dataset dependent."""
+    meta = Path(str(weights) + ".json")
+    try:
+        data = json.loads(meta.read_text())
+        chosen = data.get("selected_on")
+        return float(data["best_metrics"][chosen]["best_threshold"])
+    except Exception:
+        return default
+
+
 class UNetBackend:
     name = "unet"
 
-    def __init__(self, weights, device=None, threshold=0.5, tile=768, overlap=64):
+    def __init__(self, weights, device=None, threshold=None, tile=768, overlap=64):
         if device is None:
             mps = getattr(torch.backends, "mps", None)
             device = ("cuda" if torch.cuda.is_available()
@@ -71,7 +87,7 @@ class UNetBackend:
                       else "cpu")
         self.device = device
         self.model = load_model(weights, self.device)
-        self.threshold = threshold
+        self.threshold = suggested_threshold(weights) if threshold is None else threshold
         self.tile = tile
         self.overlap = overlap
 

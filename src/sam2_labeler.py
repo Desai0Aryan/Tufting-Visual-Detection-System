@@ -92,23 +92,62 @@ def iter_tiles(h, w, tile=512, overlap=128):
 
 
 # ------------------------------------------------------------------ main
-def refine_with_sam(image_bgr, proposals, proposal_mask, predictor,
-                    tile=512, overlap=128, max_prompts=2000, **accept_kw):
+def _iou(a, b):
+    inter = int((a & b).sum())
+    union = int(a.sum()) + int(b.sum()) - inter
+    return inter / union if union else 0.0
+
+
+def _best_sam_mask(masks, prop_local):
+    """SAM returns several nested guesses (string / string+tape / string+shadow...).
+    Pick the one that agrees best with the proposal instead of trusting guess #0."""
+    ms = np.asarray(masks)
+    if ms.ndim == 2:
+        ms = ms[None]
+    ms = ms > 0
+    best = max(range(len(ms)), key=lambda k: _iou(ms[k], prop_local))
+    return ms[best]
+
+
+def refine_with_sam_detailed(image_bgr, proposals, proposal_mask, predictor,
+                             tile=512, overlap=128, max_prompts=2000,
+                             strict=False, multimask=True, **accept_kw):
     """Refine `proposals` (list[Tuft]) with SAM 2.
 
-    Returns (refined_mask uint8 0/255, stats dict). Proposals SAM disagrees
-    with fall back to the proposal's own pixels, so the result never loses a
-    tuft the classical code found; it can only get cleaner or fuller.
+    Returns (refined_mask uint8 0/255, stats dict, status list).  status[i] is
+    "accepted" (SAM mask used), "fallback" (SAM disagreed / failed, proposal pixels
+    kept), "rejected" (strict mode: SAM disagreed, proposal dropped as a likely
+    false positive) or "skipped" (over max_prompts).
+
+    strict=False keeps the old guarantee: nothing the classical code found is lost.
+    strict=True is the one to use for training labels and for cleaning detections:
+    a candidate that SAM cannot segment as a compact, string-like object that
+    matches the candidate is far more likely to be sky texture, a stripe edge or a
+    shadow than a tuft, and keeping it teaches the U-Net to hallucinate.
     """
     h, w = image_bgr.shape[:2]
     rgb = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2RGB)
     refined = np.zeros((h, w), np.uint8)
-    stats = {"proposals": len(proposals), "sam_accepted": 0, "fallback": 0, "skipped": 0}
+    stats = {"proposals": len(proposals), "sam_accepted": 0, "fallback": 0,
+             "rejected": 0, "skipped": 0}
+    status = ["skipped"] * len(proposals)
 
-    # each proposal is handled by the tile that contains its whole bounding box
     pending = list(enumerate(proposals[:max_prompts]))
     stats["skipped"] = max(0, len(proposals) - max_prompts)
     done = set()
+
+    def _fallback(i, t, local_slice=None, prop_local=None):
+        if strict:
+            status[i] = "rejected"
+            stats["rejected"] += 1
+        else:
+            if prop_local is not None:
+                refined[local_slice][prop_local > 0] = 255
+            else:
+                cv2.drawContours(refined, [t.contour.astype(np.int32)], -1, 255, thickness=cv2.FILLED)
+            status[i] = "fallback"
+            stats["fallback"] += 1
+
     for (x0, y0, x1, y1) in iter_tiles(h, w, tile, overlap):
         here = []
         for i, t in pending:
@@ -120,6 +159,7 @@ def refine_with_sam(image_bgr, proposals, proposal_mask, predictor,
         if not here:
             continue
         predictor.set_image(rgb[y0:y1, x0:x1])
+        sl = (slice(y0, y1), slice(x0, x1))
         for i, t in here:
             done.add(i)
             prop_local = np.zeros((y1 - y0, x1 - x0), np.uint8)
@@ -129,20 +169,42 @@ def refine_with_sam(image_bgr, proposals, proposal_mask, predictor,
             try:
                 masks, scores, _ = predictor.predict(
                     point_coords=pr.points, point_labels=pr.labels, box=pr.box,
-                    multimask_output=False)
-                m = np.asarray(masks)[0] > 0
+                    multimask_output=multimask)
+                m = _best_sam_mask(masks, prop_local > 0)
             except Exception:  # a failing prompt must not kill a labelling run
                 m = None
             if m is not None and accept_mask(m, prop_local > 0, **accept_kw):
-                refined[y0:y1, x0:x1][m] = 255
+                refined[sl][m] = 255
+                status[i] = "accepted"
                 stats["sam_accepted"] += 1
             else:
-                refined[y0:y1, x0:x1][prop_local > 0] = 255
-                stats["fallback"] += 1
+                _fallback(i, t, sl, prop_local)
 
-    # proposals not wholly inside any tile (rare, huge ones): keep their own pixels
+    # proposals not wholly inside any tile (rare, huge ones)
     for i, t in pending:
         if i not in done:
-            cv2.drawContours(refined, [t.contour.astype(np.int32)], -1, 255, thickness=cv2.FILLED)
-            stats["fallback"] += 1
+            _fallback(i, t)
+    return refined, stats, status
+
+
+def refine_with_sam(image_bgr, proposals, proposal_mask, predictor,
+                    tile=512, overlap=128, max_prompts=2000, **accept_kw):
+    """Backward-compatible wrapper: (refined_mask, stats). See refine_with_sam_detailed."""
+    refined, stats, _ = refine_with_sam_detailed(
+        image_bgr, proposals, proposal_mask, predictor, tile=tile, overlap=overlap,
+        max_prompts=max_prompts, **accept_kw)
     return refined, stats
+
+
+def verify_tufts_with_sam(image_bgr, tufts, predictor, tile=512, overlap=128, **accept_kw):
+    """Inference-time false-positive filter: keep only tufts SAM 2 can confirm.
+
+    Returns (kept_tufts, stats).  Kept tufts retain their own geometry (root/tip/
+    vector); SAM is used purely as a verifier here, so orientation estimates do
+    not change.
+    """
+    mask = np.zeros(image_bgr.shape[:2], np.uint8)
+    _, stats, status = refine_with_sam_detailed(
+        image_bgr, tufts, mask, predictor, tile=tile, overlap=overlap,
+        strict=True, **accept_kw)
+    return [t for t, s in zip(tufts, status) if s == "accepted"], stats

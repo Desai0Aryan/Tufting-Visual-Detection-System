@@ -11,6 +11,11 @@ from .mask_to_tufts import extract_tufts
 # classical area limits, and the human reviewer is the real quality gate
 LABEL_EXTRACT_KW = dict(min_area=10, max_area=2500, min_elongation=1.8,
                         min_length_px=8, max_length_px=260)
+# Used when *generating* labels automatically. The relaxed set above is kept for the
+# review tool (it must be able to re-read any saved label); generating with it let
+# blobs, stripe edges and merged tuft+shadow masks through as "tufts".
+STRICT_LABEL_EXTRACT_KW = dict(min_area=12, max_area=1000, min_elongation=2.0,
+                               min_length_px=10, max_length_px=160)
 
 
 # ---------------------------------------------------------------- encode/decode

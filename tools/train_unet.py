@@ -41,10 +41,15 @@ def dice_loss(logits, target, weight=None, eps=1.0):
     return (1.0 - (2.0 * inter + eps) / (denom + eps)).mean()
 
 
-def total_loss(logits, target, root_weight, root_scale=0.5):
+def total_loss(logits, target, root_weight, root_scale=0.5, pos_weight=2.0):
     """Tuft mask: BCE + Dice everywhere. Root mask: same, but only where the
-    label says the root decision is trustworthy (root_weight == 1)."""
-    tuft = bce(logits[:, 0:1], target[:, 0:1]) + dice_loss(logits[:, 0:1], target[:, 0:1])
+    label says the root decision is trustworthy (root_weight == 1).
+
+    pos_weight was 4.0: strings are ~1-3% of pixels, so a heavy positive weight buys
+    recall by making the net fire on anything string-like (stripe edges, texture,
+    sky streaks). 2.0 keeps it sensitive without that bias."""
+    tuft = (bce(logits[:, 0:1], target[:, 0:1], pos_weight=pos_weight)
+            + dice_loss(logits[:, 0:1], target[:, 0:1]))
     if root_weight.sum() > 0:
         root = (bce(logits[:, 1:2], target[:, 1:2], root_weight)
                 + dice_loss(logits[:, 1:2], target[:, 1:2], root_weight))
@@ -55,7 +60,7 @@ def total_loss(logits, target, root_weight, root_scale=0.5):
 
 # ----------------------------------------------------------------- evaluation
 @torch.no_grad()
-def evaluate(model, loader, device):
+def evaluate(model, loader, device, beta=0.5):
     model.eval()
     tuft = {t: SegMeter() for t in THRESHOLDS}
     root = SegMeter()
@@ -70,14 +75,37 @@ def evaluate(model, loader, device):
         "tuft_dice": tuft[0.5].dice, "tuft_iou": tuft[0.5].iou,
         "tuft_precision": tuft[0.5].precision, "tuft_recall": tuft[0.5].recall,
         "root_dice": root.dice,
-        "best_threshold": max(THRESHOLDS, key=lambda t: tuft[t].dice),
+        # threshold chosen on F-beta (beta<1 favours precision) instead of plain Dice, so the
+        # suggested --threshold trades a little recall for far fewer false detections
+        "best_threshold": max(THRESHOLDS, key=lambda t: tuft[t].fbeta(beta)),
         "dice_by_threshold": {str(t): tuft[t].dice for t in THRESHOLDS},
+        "precision_by_threshold": {str(t): tuft[t].precision for t in THRESHOLDS},
+        "recall_by_threshold": {str(t): tuft[t].recall for t in THRESHOLDS},
     }
 
 
 def make_loader(ds, batch, shuffle, workers):
     return DataLoader(ds, batch_size=batch, shuffle=shuffle, num_workers=workers,
                       drop_last=shuffle, pin_memory=torch.cuda.is_available())
+
+
+def _warn_unnormalised(roots):
+    """Datasets labelled before scale normalisation hold tufts at native photo scale, which
+    will not match what main.py now feeds the network."""
+    import json as _json
+    for r in roots:
+        mp = Path(r) / "meta.json"
+        if not mp.exists():
+            continue
+        try:
+            meta = _json.loads(mp.read_text())
+        except Exception:
+            continue
+        missing = [k for k, v in meta.items() if "scale" not in v]
+        if missing:
+            print(f"[warn] {r}: {len(missing)}/{len(meta)} samples have no recorded scale "
+                  f"(labelled before --norm-size existed). Re-run tools.autolabel on those photos "
+                  f"or tufts in big photos will be 2-3x larger than at inference.")
 
 
 # ----------------------------------------------------------------- main
@@ -94,6 +122,13 @@ def main(argv=None):
     ap.add_argument("--size", type=int, default=256, help="training crop size (px)")
     ap.add_argument("--base", type=int, default=16, help="U-Net base channels")
     ap.add_argument("--lr", type=float, default=2e-3)
+    ap.add_argument("--pos-weight", type=float, default=2.0,
+                    help="BCE weight on tuft pixels (was 4.0; high values cause false detections)")
+    ap.add_argument("--p-positive", type=float, default=0.6,
+                    help="fraction of training crops centred on a tuft (was 0.8). Lower = more "
+                         "tuft-free background crops, i.e. more hard negatives (sky, texture, edges)")
+    ap.add_argument("--beta", type=float, default=0.5,
+                    help="F-beta used to pick the suggested threshold (<1 favours precision)")
     ap.add_argument("--val-percent", type=int, default=20)
     ap.add_argument("--workers", type=int, default=0)
     ap.add_argument("--seed", type=int, default=0)
@@ -106,11 +141,15 @@ def main(argv=None):
         ap.error("--size must be divisible by 16 (U-Net depth 4)")
     torch.manual_seed(a.seed)
     np.random.seed(a.seed)
-    device = a.device or ("cuda" if torch.cuda.is_available() else "cpu")
+    mps = getattr(torch.backends, "mps", None)
+    device = a.device or ("cuda" if torch.cuda.is_available()
+                          else "mps" if mps is not None and mps.is_available() else "cpu")
     real, syn = list(a.data), list(a.synthetic)
 
     roots = real + syn
-    train_ds = CropDataset(roots, "train", a.size, a.epoch_size, a.val_percent, a.seed)
+    _warn_unnormalised(real)
+    train_ds = CropDataset(roots, "train", a.size, a.epoch_size, a.val_percent, a.seed,
+                           p_positive=a.p_positive)
     if real and syn:
         share = float(np.clip(a.synthetic_share, 0.0, 0.9))
         shares = {str(r): (1 - share) / len(real) for r in real}
@@ -154,7 +193,7 @@ def main(argv=None):
             t0, sums, n = time.time(), np.zeros(3), 0
             for img, tgt, wgt in loader:
                 img, tgt, wgt = img.to(device), tgt.to(device), wgt.to(device)
-                loss, lt, lr_ = total_loss(model(img), tgt, wgt)
+                loss, lt, lr_ = total_loss(model(img), tgt, wgt, pos_weight=a.pos_weight)
                 opt.zero_grad(set_to_none=True)
                 loss.backward()
                 torch.nn.utils.clip_grad_norm_(model.parameters(), 5.0)
@@ -164,7 +203,7 @@ def main(argv=None):
             sched.step()
             avg = sums / max(n, 1)
 
-            metrics = {k: evaluate(model, ld, device) for k, ld in val_loaders.items()}
+            metrics = {k: evaluate(model, ld, device, a.beta) for k, ld in val_loaders.items()}
             row = [epoch, f"{avg[0]:.4f}", f"{avg[1]:.4f}", f"{avg[2]:.4f}", f"{sched.get_last_lr()[0]:.2e}"]
             for k in val_sets:
                 row += [f"{metrics[k]['tuft_dice']:.4f}", f"{metrics[k]['tuft_iou']:.4f}",
@@ -180,7 +219,8 @@ def main(argv=None):
             if improved:
                 best_score, best_epoch, best_metrics = score, epoch, metrics
                 save_checkpoint(model, str(out), config)
-            val_txt = "  ".join(f"{k}: dice {m['tuft_dice']:.3f} iou {m['tuft_iou']:.3f} root {m['root_dice']:.3f}"
+            val_txt = "  ".join(f"{k}: dice {m['tuft_dice']:.3f} P {m['tuft_precision']:.3f} "
+                                f"R {m['tuft_recall']:.3f} root {m['root_dice']:.3f}"
                                 for k, m in metrics.items())
             print(f"epoch {epoch:3d}/{a.epochs}  loss {avg[0]:.3f}  {val_txt}  "
                   f"({time.time() - t0:.0f}s){'  *best*' if improved else ''}")

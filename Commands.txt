@@ -15,74 +15,98 @@ python -m pip install -r Requirements.txt -r Requirements-train.txt
 python -m pip install "git+https://github.com/facebookresearch/sam2.git"
 
 
-2. MAKE TRAINING LABELS
------------------------
+2. MAKE TRAINING LABELS  (SAM 2 labeller)
+-----------------------------------------
 
-Create draft labels only inside the vehicle surface. The polygon selector is
-per image: click around the instrumented wing/door/window, press Enter to
-confirm, and use right-click to undo a point. Do not include sky, ground, or
-the garage floor in the polygon. Start a clean dataset so the earlier
-background-heavy drafts in data/new_review are not mixed in:
+Photos are first downscaled to --norm-size (default 1400 px long side) so every
+tuft is ~15-110 px long, the size the detector limits and the U-Net crops assume.
+main.py uses the same default, so training and inference see the same scale.
 
-python -m tools.autolabel --images Images/tuft4.jpg --out data/vehicle_review --select-roi
-python -m tools.autolabel --images Images/tufts1.jpeg --out data/vehicle_review --select-roi
-python -m tools.autolabel --images Images/tufts2.jpg --out data/vehicle_review --select-roi
-python -m tools.autolabel --images Images/tufts5.png --out data/vehicle_review --select-roi
+For each photo, draw a polygon around the instrumented surface (click points,
+Enter = done, right-click = undo, Esc = whole image). Everything outside the
+polygon is saved as background, which is what teaches the U-Net to ignore sky,
+ground, garage doors and other vehicles:
 
-tufts3.jpg and tufts6.jpg are AVIF files despite their .jpg names. Convert them
-to real JPEG files before passing them to the OpenCV tools:
+python -m tools.autolabel --images Images/tuft4.jpg --out data/vehicle_review --labeler sam2 --select-roi --polarity auto
+
+Non-interactive alternative (original-image pixels):
+
+python -m tools.autolabel --images Images/tuft4.jpg --out data/vehicle_review --labeler sam2 --roi-polygon "x,y;x,y;x,y;x,y"
+
+--labeler sam2 is STRICT by default: a candidate SAM 2 cannot segment as a compact,
+string-like object that matches the candidate is DROPPED, not kept. (The old
+behaviour kept every classical proposal, so every classical false positive
+became a training label. --keep-sam-disagreements restores it.)
+
+--polarity: dark = dark strings on a light surface, light = light/bright strings on
+a dark surface (e.g. orange yarn on a dark window), auto = try both, keep the one
+with more tufts. If tufts are a different colour from what you expect, check the
+preview in data/<out>/previews/ before reviewing.
+
+tufts3.jpg and tufts6.jpg are AVIF files despite their .jpg names. Convert first:
 
 mkdir -p outputs/avif-converted
 sips -s format jpeg Images/tufts3.jpg --out outputs/avif-converted/tufts3.jpeg
 sips -s format jpeg Images/tufts6.jpg --out outputs/avif-converted/tufts6.jpeg
-python -m tools.autolabel --images outputs/avif-converted/tufts3.jpeg --out data/vehicle_review --select-roi
-python -m tools.autolabel --images outputs/avif-converted/tufts6.jpeg --out data/vehicle_review --select-roi
 
-Review labels at a larger display scale:
+Review (click a tuft to reject, shift-click to flip root/tip, right-drag to reject
+a box, u undo, s save+continue). NOTE: the brush/"select-only"/--scale options this
+file used to describe are not in tools/review_labels.py at the moment, so the review
+tool can remove false labels but cannot ADD tufts the labeller missed.
 
-python -m tools.review_labels --data data/vehicle_review --scale 0.85 --select-only
+python -m tools.review_labels --data data/vehicle_review
 
-In select-only mode every proposal starts unselected. Click a tuft proposal to
-select its whole mask, and click again to deselect it. Only selected tufts are
-saved as positive labels:
-
-In the review window: click to select/deselect a tuft, shift-click to flip direction,
-right-drag to reject a box, m to paint missed tuft-mask pixels, e to erase
-pixels, - and + to change brush size, v to return to click-selection, u to undo,
-and s to save and continue. The tuft proposals are shown as a green mask, not
-vectors; press a to toggle vector arrows. Brush edits add tuft-mask labels only;
-they do not invent root-direction labels. Review every tile and remove any
-proposals that are not on the instrumented vehicle surface.
+Photos labelled BEFORE --norm-size existed have no "scale" in meta.json; train_unet
+warns about them. Re-run autolabel on those photos.
 
 
 3. TRAIN THE U-NET
 ------------------
 
-Make supplemental synthetic training examples:
-
 python -m tools.make_synthetic_dataset --out data/synthetic --count 60
-
-Train using the reviewed photos and synthetic examples. This writes a separate
-candidate checkpoint so an existing model is not overwritten:
 
 python tools/train_unet.py --data data/real_review data/vehicle_review --synthetic data/synthetic --out models/tuft_unet_vehicle.pt --epochs 50 --epoch-size 400 --batch 8 --size 256 --base 16 --device mps
 
+Defaults changed to cut false detections: --pos-weight 2.0 (was 4.0),
+--p-positive 0.6 (was 0.8, i.e. more tuft-free "hard negative" crops), and the
+suggested threshold is chosen on F0.5 (precision-weighted) instead of Dice.
+The log now prints precision (P) and recall (R) each epoch.
 
-4. RUN AN IMAGE AND OPEN THE RESULT
+
+4. MEASURE IT  (do this - it is the only way to know it got better)
+--------------------------------------------------------------------
+
+Object-level precision/recall on the held-out photos, same split train_unet used:
+
+python -m tools.eval_detection --data data/vehicle_review --backend classical --polarity light
+python -m tools.eval_detection --data data/vehicle_review --backend classical --polarity light --no-clean
+python -m tools.eval_detection --data data/vehicle_review --backend unet --weights models/tuft_unet_vehicle.pt
+
+(needs >= 2 source photos so a held-out split exists; --split all scores everything)
+
+
+5. RUN AN IMAGE AND OPEN THE RESULT
 -----------------------------------
 
-Replace sample_tufts1.jpg with the image name in Images/:
+python main.py --image Images/tuft4.jpg --backend unet --weights models/tuft_unet_vehicle.pt --outdir output --save-mask
 
-python main.py --image Images/sample_tufts1.jpg --backend unet --weights models/tuft_unet_vehicle.pt --select-roi --outdir output --save-mask
+Optional extra false-positive filter (needs sam2 installed, slower):
 
-For inference, --select-roi selects a rectangular region of the vehicle to
-exclude surrounding background from tuft/vector detection. Use the threshold
-reported in the new checkpoint's training metadata if you tune it.
+python main.py --image Images/tuft4.jpg --backend unet --weights models/tuft_unet_vehicle.pt --verify-sam2 --outdir output
+
+--threshold defaults to the value the checkpoint's own validation picked
+(models/<name>.pt.json); pass it only to override. --no-clean turns off the
+"must belong to the main cluster of tufts" filter. --select-roi still gives a
+rectangle; use it to exclude surroundings.
+
+Classical backend (no training), pick the polarity that matches your tufts:
+
+python main.py --image Images/sample_tufts1.jpg --polarity dark
+python main.py --image Images/tuft4.jpg --polarity light
 
 Open the newest annotated image:
 
 open "$(ls -t output/*_annotated.png | head -n 1)"
 
 The annotated image, mask, and vector CSV are saved in output/.
-The detector cannot promise a fixed accuracy on arbitrary images; measure recall
-and false positives against reviewed photos held out from training.
+The detector cannot promise a fixed accuracy on arbitrary images; use step 4.

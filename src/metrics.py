@@ -35,3 +35,10 @@ class SegMeter:
     @property
     def recall(self):
         return self.tp / (self.tp + self.fn) if (self.tp + self.fn) else 1.0
+
+    def fbeta(self, beta=1.0):
+        """beta < 1 weights precision more (fewer false detections); beta > 1 favours recall."""
+        p, r = self.precision, self.recall
+        b2 = beta * beta
+        d = b2 * p + r
+        return (1 + b2) * p * r / d if d else 0.0

@@ -132,6 +132,11 @@ def _build_parser() -> argparse.ArgumentParser:
                         help="CLAHE clip limit for local contrast normalization")
     parser.add_argument("--clahe-tile", type=int, default=8,
                         help="CLAHE tile grid size (NxN) for local contrast normalization")
+    parser.add_argument("--tape-root", action="store_true",
+                        help="Use yellow anchor tape to pick each tuft's root end and "
+                             "reject candidates not anchored to tape")
+    parser.add_argument("--tape-max-dist", type=float, default=60,
+                        help="Max px from a tuft end to tape for --tape-root")
     return parser
 
 
@@ -240,7 +245,8 @@ def main(argv=None):
             min_elongation=args.min_elongation,
             min_length_px=args.min_length_px, max_length_px=args.max_length_px,
             roi=work_roi, backend=backend, vector_mode=args.vector_mode,
-            flow_prior=flow_prior,
+            flow_prior=flow_prior, tape_root=args.tape_root,
+            tape_max_dist=args.tape_max_dist * scale,
         )
         found = detector.detect(work)
         raw_count = len(found)

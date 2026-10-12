@@ -1,4 +1,5 @@
-"""CSV export of pipeline results (no Qt). The annotated video is written by the
+"""CSV export of pipeline results (no Qt). Every tracked tuft is written, with a
+`state` column (tentative / confirmed / missing) to filter on. The annotated video is written by the
 app, because it reuses the app's overlay modules."""
 import csv
 
@@ -7,7 +8,7 @@ COLUMNS = ["frame", "time_s", "track_id", "state", "stall", "root_x", "root_y", 
            "reversed", "confidence", "detected"]
 
 
-def rows(results, track_ids=None, confirmed_only=True):
+def rows(results, track_ids=None, confirmed_only=False):
     keep = set(track_ids) if track_ids is not None else None
     for r in results:
         for t in r.tufts:
@@ -25,7 +26,7 @@ def rows(results, track_ids=None, confirmed_only=True):
                    "reversed": int(t.reversed), "confidence": round(t.confidence, 3), "detected": int(t.detected)}
 
 
-def write_csv(path, results, track_ids=None, confirmed_only=True):
+def write_csv(path, results, track_ids=None, confirmed_only=False):
     n = 0
     with open(path, "w", newline="") as fh:
         w = csv.DictWriter(fh, fieldnames=COLUMNS)

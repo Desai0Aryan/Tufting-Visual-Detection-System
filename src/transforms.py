@@ -1,0 +1,121 @@
+"""Albumentations training pipeline (image and mask always transformed together).
+
+The label is an HxWx3 uint8 mask (tuft, root, root-valid), passed as one
+`mask` so every geometric op moves all three channels with the image.
+Masks use nearest-neighbour interpolation, so they stay binary.
+
+Geometric ops run on a window larger than the output crop, followed by a
+centre crop, so rotation and scale never expose padded borders.
+Nothing here changes the output resolution: there is no downscaling.
+"""
+import cv2
+import numpy as np
+import albumentations as A
+
+DEFAULT_AUG = {
+    "flip_p": 0.5,
+    "affine_p": 0.7, "rotate_deg": 15, "scale": [0.8, 1.25],
+    "elastic_p": 0.15, "elastic_alpha": 20.0, "elastic_sigma": 8.0,
+    "brightness_contrast_p": 0.7, "brightness": 0.25, "contrast": 0.25,
+    "gamma_p": 0.4, "gamma": [70, 150],
+    "hue_p": 0.2,
+    "shadow_gradient_p": 0.4, "shadow_polygon_p": 0.15,
+    "glare_p": 0.3,
+    "blur_p": 0.3, "motion_blur_max": 9,
+    "noise_p": 0.4, "noise_std": [0.01, 0.05],
+    "compression_p": 0.5, "compression_quality": [30, 90],
+}
+
+# How much larger the pre-crop window must be so a crop rotated by `rotate_deg`
+# and zoomed out by min(scale) still lies inside real pixels.
+def window_factor(aug):
+    a = np.radians(aug.get("rotate_deg", 0))
+    return float((abs(np.cos(a)) + abs(np.sin(a))) / min(1.0, aug.get("scale", [1, 1])[0])) + 0.02
+
+
+class ShadowGradient(A.ImageOnlyTransform):
+    """A soft-edged cast shadow: one side of a random line (or the inside of a
+    random ellipse) is darkened, with a blurred transition. Unlike a global
+    illumination ramp, the shadow edge is sharp enough to look like a tuft-ish
+    edge to a threshold, which is exactly the failure we train against."""
+
+    def __init__(self, strength=(0.35, 0.8), softness=(2, 40), p=0.5):
+        super().__init__(p=p)
+        self.strength, self.softness = strength, softness
+
+    def get_params_dependent_on_data(self, params, data):
+        h, w = params["shape"][:2]
+        r = self.random_generator
+        m = np.zeros((h, w), np.float32)
+        if r.random() < 0.6:
+            ang = r.uniform(0, np.pi)
+            c = (r.uniform(0, w), r.uniform(0, h))
+            yy, xx = np.mgrid[0:h, 0:w].astype(np.float32)
+            m = ((xx - c[0]) * np.cos(ang) + (yy - c[1]) * np.sin(ang) > 0).astype(np.float32)
+        else:
+            cv2.ellipse(m, (int(r.uniform(0, w)), int(r.uniform(0, h))),
+                        (int(r.uniform(0.1, 0.6) * w), int(r.uniform(0.1, 0.6) * h)),
+                        r.uniform(0, 180), 0, 360, 1.0, -1)
+        s = int(r.uniform(*self.softness)) | 1
+        m = cv2.GaussianBlur(m, (s, s), 0) if s > 1 else m
+        return {"gain": 1.0 - r.uniform(*self.strength) * m}
+
+    def apply(self, img, gain=None, **params):
+        return np.clip(img.astype(np.float32) * gain[..., None], 0, 255).astype(np.uint8)
+
+
+class GlareBlobs(A.ImageOnlyTransform):
+    """Additive specular glare: 1-3 bright Gaussian blobs, some stretched into
+    streaks, that can saturate to white (the same colour as the tufts)."""
+
+    def __init__(self, count=(1, 3), intensity=(80, 255), p=0.3):
+        super().__init__(p=p)
+        self.count, self.intensity = count, intensity
+
+    def get_params_dependent_on_data(self, params, data):
+        h, w = params["shape"][:2]
+        r = self.random_generator
+        add = np.zeros((h, w), np.float32)
+        for _ in range(int(r.integers(self.count[0], self.count[1] + 1))):
+            blob = np.zeros((h, w), np.float32)
+            axes = (max(2, int(r.uniform(0.01, 0.15) * w)), max(2, int(r.uniform(0.005, 0.06) * h)))
+            cv2.ellipse(blob, (int(r.uniform(0, w)), int(r.uniform(0, h))), axes,
+                        r.uniform(0, 180), 0, 360, 1.0, -1)
+            k = int(max(axes) * r.uniform(0.3, 1.0)) * 2 + 1
+            add += cv2.GaussianBlur(blob, (k, k), 0) * r.uniform(*self.intensity)
+        return {"add": add}
+
+    def apply(self, img, add=None, **params):
+        return np.clip(img.astype(np.float32) + add[..., None], 0, 255).astype(np.uint8)
+
+
+def build_train_transform(size, aug=None):
+    """Returns (transform, window): crop a `window`-px square, then call
+    transform(image=rgb, mask=label) -> size x size outputs."""
+    a = dict(DEFAULT_AUG, **(aug or {}))
+    window = int(np.ceil(size * window_factor(a)))
+    ops = [
+        A.HorizontalFlip(p=a["flip_p"]),
+        A.VerticalFlip(p=a["flip_p"]),
+        A.Affine(rotate=(-a["rotate_deg"], a["rotate_deg"]), scale=tuple(a["scale"]),
+                 interpolation=cv2.INTER_LINEAR, mask_interpolation=cv2.INTER_NEAREST,
+                 border_mode=cv2.BORDER_REFLECT_101, p=a["affine_p"]),
+        A.ElasticTransform(alpha=a["elastic_alpha"], sigma=a["elastic_sigma"],
+                           mask_interpolation=cv2.INTER_NEAREST,
+                           border_mode=cv2.BORDER_REFLECT_101, p=a["elastic_p"]),
+        A.CenterCrop(size, size),
+        A.RandomBrightnessContrast(brightness_limit=a["brightness"], contrast_limit=a["contrast"],
+                                   p=a["brightness_contrast_p"]),
+        A.RandomGamma(gamma_limit=tuple(a["gamma"]), p=a["gamma_p"]),
+        A.HueSaturationValue(hue_shift_limit=8, sat_shift_limit=20, val_shift_limit=0, p=a["hue_p"]),
+        ShadowGradient(p=a["shadow_gradient_p"]),
+        A.RandomShadow(shadow_roi=(0, 0, 1, 1), num_shadows_limit=(1, 2), p=a["shadow_polygon_p"]),
+        GlareBlobs(p=a["glare_p"]),
+        A.OneOf([A.GaussianBlur(blur_limit=(3, 5)),
+                 A.MotionBlur(blur_limit=(3, a["motion_blur_max"]))], p=a["blur_p"]),
+        A.GaussNoise(std_range=tuple(a["noise_std"]), p=a["noise_p"]),
+        A.OneOf([A.ImageCompression(compression_type="jpeg", quality_range=tuple(a["compression_quality"])),
+                 A.ImageCompression(compression_type="webp", quality_range=tuple(a["compression_quality"]))],
+                p=a["compression_p"]),
+    ]
+    return A.Compose(ops, seed=0), window

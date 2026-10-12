@@ -23,7 +23,7 @@ class TuftDetector:
         clahe_tile=8,
         roi=None,  # (x, y, w, h) restricting the search area, or None for full image
         backend=None,  # any object with .predict(image) -> MaskResult; default classical
-        vector_mode="chord",
+        vector_mode="tip",  # local tangent at the free end; tufts curl
         flow_prior=None,  # e.g. (1, 0): expected bulk flow direction in image coords
         polarity="dark",  # default classical backend: "dark" or "light" tufts
         tape_root=False,  # use colored anchor tape to pick the root end and reject strays

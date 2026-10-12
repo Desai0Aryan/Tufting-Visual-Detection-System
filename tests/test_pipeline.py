@@ -8,7 +8,7 @@ from main import parse_args
 
 
 ROOT = Path(__file__).resolve().parents[1]
-SAMPLE = ROOT / "Images" / "sample_tufts1.jpg"
+SAMPLE = ROOT / "tests" / "fixtures" / "sample_tufts1.jpg"
 
 
 class PipelineTests(unittest.TestCase):

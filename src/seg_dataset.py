@@ -48,14 +48,20 @@ def _to_tensors(rgb, label, classes):
 
 def crop_pad(img, label, y, x, size):
     """size x size crop at (y, x). Frames smaller than `size` are padded by
-    reflection on BOTH image and label, so mirrored tufts stay labelled as
-    tufts. (Reflecting only the image would teach "tuft = background".)"""
+    reflection on BOTH image and label (reflecting only the image would teach
+    "tuft = background"), and with a 4-channel label the padded pixels are also
+    marked ignore, so the model never learns from mirrored content. The ignore
+    channel is transformed with the image, so it stays exact after rotation."""
     c_img, c_lab = img[y:y + size, x:x + size], label[y:y + size, x:x + size]
-    ph, pw = size - c_img.shape[0], size - c_img.shape[1]
+    h, w = c_img.shape[:2]
+    ph, pw = size - h, size - w
     if ph > 0 or pw > 0:
         mode = cv2.BORDER_REFLECT_101 if min(c_img.shape[:2]) > 1 else cv2.BORDER_REPLICATE
         c_img = cv2.copyMakeBorder(c_img, 0, ph, 0, pw, mode)
         c_lab = cv2.copyMakeBorder(c_lab, 0, ph, 0, pw, mode)
+        if c_lab.ndim == 3 and c_lab.shape[2] >= 4:  # mirrored pixels: no loss, not scored
+            c_lab[h:, :, 3] = 255
+            c_lab[:, w:, 3] = 255
     return c_img, c_lab
 
 

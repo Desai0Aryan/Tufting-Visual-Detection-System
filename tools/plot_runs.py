@@ -63,8 +63,9 @@ def plot_curves(runs, names, out):
             if key.endswith("_dice") or "cldice" in key:
                 b = int(np.nanargmax(y))
                 ax.plot(x[b], y[b], "o", ms=8, color=SERIES[i], mec=SURFACE, mew=2)
-                ax.annotate(f"{y[b]:.3f}", (x[b], y[b]), xytext=(0, 9), textcoords="offset points",
-                            ha="center", color=TEXT2, fontsize=8)
+                above = ylim is None or y[b] < ylim[0] + 0.9 * (ylim[1] - ylim[0])
+                ax.annotate(f"{y[b]:.3f}", (x[b], y[b]), xytext=(0, 9 if above else -14),
+                            textcoords="offset points", ha="center", color=TEXT2, fontsize=8)
         ax.set_title(title, loc="left", color=TEXT, fontsize=10.5)
         ax.set_xlabel("epoch")
         if ylim:

@@ -14,6 +14,7 @@ albumentations==2.0.8
 albucore==0.0.24
 PyYAML==6.0.3
 tensorboard==2.21.0
+yt-dlp==2026.8.19
 pytest==9.1.1
 # SAM 2 (training labels only). Install separately, without the optional CUDA
 # extension (post-processing only; it does not build on Windows):

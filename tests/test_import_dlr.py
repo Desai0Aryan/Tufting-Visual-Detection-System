@@ -14,7 +14,7 @@ class DuplicateIdTests(unittest.TestCase):
         polys = [("T9", _rect(10, 10, 60, 14)), ("T9", _rect(200, 10, 260, 14)), ("T3", _rect(10, 50, 40, 54))]
         groups, dec = resolve_duplicates(polys, (100, 300))
         self.assertEqual(sorted(n for n, _ in groups), ["T3", "T9", "T9#2"])
-        self.assertEqual(sorted(d["action"] for d in dec), ["kept", "kept", "kept_renamed"])
+        self.assertEqual(sorted(d["action"] for d in dec), ["kept", "kept_renamed"])  # only duplicated IDs are logged
 
     def test_touching_same_id_polygons_are_merged(self):
         polys = [("T9", _rect(10, 10, 60, 14)), ("T9", _rect(61, 10, 120, 14))]  # 1 px gap: one tuft

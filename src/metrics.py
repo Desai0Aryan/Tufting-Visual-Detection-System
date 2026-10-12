@@ -42,3 +42,36 @@ class SegMeter:
         b2 = beta * beta
         d = b2 * p + r
         return (1 + b2) * p * r / d if d else 0.0
+
+
+class ClDiceMeter:
+    """Hard clDice (Shit et al. 2021) accumulated over a set:
+    Tprec = |skel(P) & G| / |skel(P)|, Tsens = |skel(G) & P| / |skel(G)|,
+    clDice = 2 Tprec Tsens / (Tprec + Tsens). Counts are summed across images,
+    like SegMeter, so empty images do not distort the score."""
+
+    def __init__(self):
+        self.sp_in_g = self.sp = self.sg_in_p = self.sg = 0
+
+    def update(self, pred, target):
+        from skimage.morphology import skeletonize
+        p, t = np.asarray(pred).astype(bool), np.asarray(target).astype(bool)
+        for pi, ti in zip(p.reshape(-1, *p.shape[-2:]), t.reshape(-1, *t.shape[-2:])):
+            sp, sg = skeletonize(pi), skeletonize(ti)
+            self.sp_in_g += int((sp & ti).sum())
+            self.sp += int(sp.sum())
+            self.sg_in_p += int((sg & pi).sum())
+            self.sg += int(sg.sum())
+
+    @property
+    def tprec(self):
+        return self.sp_in_g / self.sp if self.sp else 1.0
+
+    @property
+    def tsens(self):
+        return self.sg_in_p / self.sg if self.sg else 1.0
+
+    @property
+    def cldice(self):
+        p, s = self.tprec, self.tsens
+        return 2 * p * s / (p + s) if (p + s) else 0.0

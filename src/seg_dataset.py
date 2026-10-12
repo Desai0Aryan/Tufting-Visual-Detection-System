@@ -33,6 +33,7 @@ class Item:
     group: str            # "real" or "synthetic"
     domain: str = "own"   # where the frames come from: "own", "dlr", ... (meta.json "domain")
     weight: float = 1.0   # tuft-loss weight for this sample's label source (data.source_weights)
+    source: str = ""      # label source from meta.json, e.g. dlr_polygon, sam2_box, sam2, unet
 
 
 def _to_tensors(rgb, label, classes):
@@ -71,7 +72,7 @@ class TrainCrops:
     """torch Dataset of augmented random crops (len = epoch_size)."""
 
     def __init__(self, items, size=512, epoch_size=2000, seed=0, p_positive=0.7,
-                 synthetic_share=0.3, aug=None, classes=1, augment=True):
+                 synthetic_share=0.3, aug=None, classes=1, augment=True, source_shares=None):
         from .transforms import build_domain_transform, build_train_transform
         aug = dict(aug or {})
         self.domain_tf = {d: build_domain_transform(spec)
@@ -84,7 +85,21 @@ class TrainCrops:
         if not augment:
             import albumentations as A
             self.tf, self.window = A.Compose([A.CenterCrop(size, size)]), size
-        self.p = self._probabilities(synthetic_share)
+        self.p = (self._source_probabilities(source_shares) if source_shares
+                  else self._probabilities(synthetic_share))
+
+    def _source_probabilities(self, shares):
+        """Fraction of crops per label source, independent of how many frames each
+        source has. Sources not listed share whatever fraction is left."""
+        srcs = np.array([it.source for it in self.items])
+        listed = {s: float(v) for s, v in shares.items() if (srcs == s).any()}
+        rest = max(0.0, 1.0 - sum(listed.values()))
+        n_rest = int((~np.isin(srcs, list(listed))).sum())
+        p = np.array([listed[s] / (srcs == s).sum() if s in listed else (rest / n_rest if n_rest else 0.0)
+                      for s in srcs])
+        if p.sum() <= 0:
+            raise ValueError("source_shares select no training samples")
+        return p / p.sum()
 
     def _probabilities(self, share):
         groups = np.array([it.group for it in self.items])

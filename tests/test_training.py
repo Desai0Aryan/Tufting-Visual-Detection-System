@@ -202,5 +202,33 @@ class SourceWeightDatasetTests(unittest.TestCase):
             self.assertAlmostEqual(float(ds[0][2][1].max()), 0.5)
 
 
+
+class SourceShareTests(unittest.TestCase):
+    def test_shares_are_per_source_not_per_frame(self):
+        from src.seg_dataset import Item, TrainCrops
+        with tempfile.TemporaryDirectory() as d:
+            toy_dataset(f"{d}/r", {"a": 1})
+            items = [Item(f"{d}/r", "a__f000", "real", "dlr", 1.0, "dlr_polygon")] +                     [Item(f"{d}/r", "a__f000", "real", "dlr", 1.0, "sam2_box")] * 9
+            ds = TrainCrops(items, size=64, epoch_size=1, augment=False,
+                            source_shares={"dlr_polygon": 0.5, "sam2_box": 0.5})
+            self.assertAlmostEqual(float(ds.p[0]), 0.5)
+            self.assertAlmostEqual(float(ds.p[1:].sum()), 0.5)
+            with self.assertRaises(ValueError):
+                TrainCrops(items[:1], size=64, epoch_size=1, augment=False, source_shares={"dlr_polygon": 0.0})
+
+    def test_train_sources_filters_training_but_not_validation(self):
+        from src.label_io import save_frame
+        from tools.train import assemble_splits
+        with tempfile.TemporaryDirectory() as d:
+            write_sources(f"{d}/s.csv", {"a": "train", "v": "val"})
+            m = np.zeros((64, 64), np.uint8)
+            for stem, clip, src in (("a__f0", "a", "sam2_box"), ("a__f1", "a", "dlr_polygon"), ("v__f0", "v", "dlr_polygon")):
+                save_frame(f"{d}/r", stem, np.zeros((64, 64, 3), np.uint8), m, [], {"clip_id": clip, "source": src})
+            cfg = {"data": {"real": [f"{d}/r"], "sources_csv": f"{d}/s.csv", "train_sources": ["sam2_box"]}}
+            train, val, _ = assemble_splits(cfg)
+            self.assertEqual([i.stem for i in train], ["a__f0"])
+            self.assertEqual([i.stem for i in val], ["v__f0"])
+
+
 if __name__ == "__main__":
     unittest.main()

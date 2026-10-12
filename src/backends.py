@@ -33,12 +33,18 @@ class ClassicalBackend:
         clahe = cv2.createCLAHE(
             clipLimit=self.clahe_clip, tileGridSize=(self.clahe_tile, self.clahe_tile)
         )
-        if self.polarity == "light":
-            gray = 255 - gray  # light tufts on a dark surface: flip so tufts are dark again
         blurred = cv2.GaussianBlur(clahe.apply(gray), (5, 5), 0)
+        # `c` is the contrast a tuft pixel needs against its neighborhood mean.
+        # OpenCV keeps pixels where (pixel > mean - C) for THRESH_BINARY, so a
+        # light-tuft threshold needs C negated to require "brighter by c".
+        # (CLAHE is not symmetric under inversion, so this is not the same as
+        # thresholding 255 - gray.)
+        if self.polarity == "dark":
+            mode, offset = cv2.THRESH_BINARY_INV, self.c
+        else:
+            mode, offset = cv2.THRESH_BINARY, -self.c
         thresh = cv2.adaptiveThreshold(
-            blurred, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY_INV,
-            self.block_size, self.c,
+            blurred, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, mode, self.block_size, offset,
         )
         return cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, np.ones((3, 3), np.uint8))
 

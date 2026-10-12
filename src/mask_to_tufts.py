@@ -175,9 +175,16 @@ def extract_tufts(
     vector_mode="chord",
     flow_prior=None,
     source="classical",
+    anchor_dist=None,
+    anchor_max_dist=60.0,
 ):
     """Mask -> list[Tuft]. `offset` (x, y) is added to every output coordinate so
-    results from an ROI crop land in full-image coordinates."""
+    results from an ROI crop land in full-image coordinates.
+
+    With `anchor_dist` (distance-to-tape map, same frame as `mask`), the root is
+    the path end closest to the tape (more reliable than thickness for uniform
+    yarn), and a candidate with neither end within `anchor_max_dist` of tape is
+    rejected as an unanchored stray (reflections, glare streaks)."""
     if vector_mode not in VECTOR_MODES:
         raise ValueError(f"vector_mode must be one of {VECTOR_MODES}")
     prior = None
@@ -221,9 +228,18 @@ def extract_tufts(
         if length < min_length_px or length > max_length_px:
             continue
 
-        dist = cv2.distanceTransform(local, cv2.DIST_L2, 5)
-        local_root = root_f[y0:y1, x0:x1] if root_f is not None else None
-        path_xy, orient_conf = orient_path(path_xy, dist, local_root, prior)
+        if anchor_dist is not None:
+            d_start = anchor_dist[int(path_xy[0][1]) + y0, int(path_xy[0][0]) + x0]
+            d_end = anchor_dist[int(path_xy[-1][1]) + y0, int(path_xy[-1][0]) + x0]
+            if min(d_start, d_end) > anchor_max_dist:
+                continue
+            if d_end < d_start:
+                path_xy = path_xy[::-1]
+            orient_conf = 1.0
+        else:
+            dist = cv2.distanceTransform(local, cv2.DIST_L2, 5)
+            local_root = root_f[y0:y1, x0:x1] if root_f is not None else None
+            path_xy, orient_conf = orient_path(path_xy, dist, local_root, prior)
 
         root_xy, tip_xy = path_xy[0], path_xy[-1]
         smooth = smooth_resample(path_xy)

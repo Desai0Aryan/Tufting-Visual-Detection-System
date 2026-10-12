@@ -54,9 +54,12 @@ def assemble_splits(cfg):
             meta = read_meta(root)
             dom = lambda s: meta.get(s, {}).get("domain", "own")
             sw = d.get("source_weights") or {}
-            wt = lambda s: float(sw.get(meta.get(s, {}).get("source"), 1.0))
-            train += [Item(str(root), s, "real", dom(s), wt(s)) for s in parts["train"]]
-            val += [Item(str(root), s, "real", dom(s)) for s in parts["val"]]  # validation is never down-weighted
+            src = lambda s: meta.get(s, {}).get("source", "")
+            wt = lambda s: float(sw.get(src(s), 1.0))
+            keep = d.get("train_sources")  # e.g. [sam2_box] for a pretraining stage
+            train += [Item(str(root), s, "real", dom(s), wt(s), src(s)) for s in parts["train"]
+                      if not keep or src(s) in keep]
+            val += [Item(str(root), s, "real", dom(s), 1.0, src(s)) for s in parts["val"]]  # never down-weighted
             manifest["test_samples"] += len(parts["test"])
             manifest["real"][str(root)] = {"train": parts["train"], "val": parts["val"],
                                            "test_count": len(parts["test"]),
@@ -212,7 +215,7 @@ def main(argv=None):
     train_items, val_items, manifest = assemble_splits(cfg)
     d, tcfg = cfg["data"], cfg["train"]
     train_ds = TrainCrops(train_items, d["crop"], d["epoch_size"], cfg["run"]["seed"], d["p_positive"],
-                          d["synthetic_share"], cfg.get("aug"), classes)
+                          d["synthetic_share"], cfg.get("aug"), classes, source_shares=d.get("source_shares"))
     sampler = EpochSampler(len(train_ds))
     workers = int(d["workers"])
     train_loader = DataLoader(train_ds, batch_size=d["batch_size"], sampler=sampler,
@@ -270,6 +273,12 @@ def main(argv=None):
     n_params = sum(p.numel() for p in model.parameters())
     print(f"run dir {run_dir}\ndevice {device} ({torch.cuda.get_device_name(0) if device.startswith('cuda') else 'cpu'})"
           f"  encoder {model_cfg['encoder']}  params {n_params / 1e6:.1f}M  classes {classes}")
+    import collections
+    by_src = collections.Counter(i.source or i.group for i in train_items)
+    crop_share = collections.defaultdict(float)
+    for it, p in zip(train_items, train_ds.p):
+        crop_share[it.source or it.group] += p
+    print("train sources: " + ", ".join(f"{k} {n} frames -> {crop_share[k]:.0%} of crops" for k, n in by_src.items()))
     print(f"train samples {len(train_items)} (real {sum(i.group == 'real' for i in train_items)})  "
           f"val samples {len(val_items)} ({', '.join(f'{k}: {len(v)} tiles' for k, v in val_sets.items())})  "
           f"test samples held out (never loaded): {manifest['test_samples']}")

@@ -29,7 +29,8 @@ DEFAULT_AUG = {
 # How much larger the pre-crop window must be so a crop rotated by `rotate_deg`
 # and zoomed out by min(scale) still lies inside real pixels.
 def window_factor(aug):
-    a = np.radians(aug.get("rotate_deg", 0))
+    # |cos| + |sin| peaks at 45 deg (sqrt 2), so any range reaching 45 deg needs the full factor
+    a = np.radians(min(abs(aug.get("rotate_deg", 0)), 45.0))
     return float((abs(np.cos(a)) + abs(np.sin(a))) / min(1.0, aug.get("scale", [1, 1])[0])) + 0.02
 
 

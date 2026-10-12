@@ -21,6 +21,8 @@ data:
   synthetic: []                       # OFF by default; e.g. [data/synthetic/train], train only
   synthetic_share: 0.0                # fraction of training crops from synthetic data; keep 0
                                       # unless evaluate.py's ablation shows it helps on real test
+  source_weights:                     # tuft-loss weight per label source (meta.json "source")
+    sam2_box: 1.0                     # SAM 2 masks from dataset boxes; ablation tries 0.5
   allow_synthetic_val: false          # smoke tests only: validate on synthetic when no real data
   synthetic_val_fraction: 0.2         # used only with allow_synthetic_val
   crop: 512                           # native-resolution crops; never downscaled

@@ -184,5 +184,23 @@ def torch_allclose(a, b):
     return torch.allclose(a, b, atol=2 / 255)
 
 
+
+class SourceWeightDatasetTests(unittest.TestCase):
+    def test_source_weight_scales_the_tuft_weight_channel(self):
+        from src.label_io import save_frame
+        from tools.train import assemble_splits
+        with tempfile.TemporaryDirectory() as d:
+            write_sources(f"{d}/s.csv", {"a": "train"})
+            m = np.zeros((96, 96), np.uint8); cv2.line(m, (10, 50), (80, 50), 255, 3)
+            save_frame(f"{d}/r", "a__f0", np.zeros((96, 96, 3), np.uint8), m, [], {"clip_id": "a", "source": "sam2_box"})
+            save_frame(f"{d}/r", "a__f1", np.zeros((96, 96, 3), np.uint8), m, [], {"clip_id": "a", "source": "dlr_polygon"})
+            cfg = {"data": {"real": [f"{d}/r"], "sources_csv": f"{d}/s.csv", "source_weights": {"sam2_box": 0.5}}}
+            train, val, man = assemble_splits(cfg)
+            self.assertEqual({i.stem: i.weight for i in train}, {"a__f0": 0.5, "a__f1": 1.0})
+            from src.seg_dataset import TrainCrops
+            ds = TrainCrops([i for i in train if i.stem == "a__f0"], size=64, epoch_size=1, augment=False)
+            self.assertAlmostEqual(float(ds[0][2][1].max()), 0.5)
+
+
 if __name__ == "__main__":
     unittest.main()

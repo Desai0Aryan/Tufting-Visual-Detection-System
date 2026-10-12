@@ -15,7 +15,9 @@ def bce_loss(logits, target, pos_weight=1.0, weight=None):
     loss = F.binary_cross_entropy_with_logits(logits, target, reduction="none", pos_weight=pw)
     if weight is None:
         return loss.mean()
-    return (loss * weight).sum() / weight.sum().clamp(min=1.0)
+    # normalise by the number of counted pixels (not the weight sum), so a weight of
+    # 0.5 really halves a label source's contribution even in a batch made only of it
+    return (loss * weight).sum() / (weight > 0).sum().clamp(min=1)
 
 
 def dice_loss(logits, target, weight=None, eps=1.0, per_sample=False):
@@ -81,8 +83,8 @@ class SegLoss:
         optional channel 1 = tuft loss weight (0 inside ignore regions)."""
         t_logit, t_tgt = logits[:, 0:1], target[:, 0:1]
         w = root_valid[:, 1:2] if root_valid is not None and root_valid.shape[1] > 1 else None
-        if w is not None and bool((w > 0).all()):
-            w = None  # nothing ignored: use the plain losses
+        if w is not None and bool((w == 1).all()):
+            w = None  # nothing ignored or down-weighted: use the plain losses
         parts = {"bce": bce_loss(t_logit, t_tgt, self.pos_weight, w),
                  "dice": dice_loss(t_logit, t_tgt, w)}
         total = self.w_bce * parts["bce"] + self.w_dice * parts["dice"]

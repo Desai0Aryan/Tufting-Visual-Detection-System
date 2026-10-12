@@ -53,11 +53,14 @@ def assemble_splits(cfg):
             parts = split_real(root, list_samples(root), split_map)
             meta = read_meta(root)
             dom = lambda s: meta.get(s, {}).get("domain", "own")
-            train += [Item(str(root), s, "real", dom(s)) for s in parts["train"]]
-            val += [Item(str(root), s, "real", dom(s)) for s in parts["val"]]
+            sw = d.get("source_weights") or {}
+            wt = lambda s: float(sw.get(meta.get(s, {}).get("source"), 1.0))
+            train += [Item(str(root), s, "real", dom(s), wt(s)) for s in parts["train"]]
+            val += [Item(str(root), s, "real", dom(s)) for s in parts["val"]]  # validation is never down-weighted
             manifest["test_samples"] += len(parts["test"])
             manifest["real"][str(root)] = {"train": parts["train"], "val": parts["val"],
-                                           "test_count": len(parts["test"])}
+                                           "test_count": len(parts["test"]),
+                                           "train_weights": {s: wt(s) for s in parts["train"] if wt(s) != 1.0}}
         for split in ("train", "val", "test"):
             manifest["clips"][split] = sorted(c for c, s in split_map.items() if s == split)
     for root in d.get("synthetic") or []:

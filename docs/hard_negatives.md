@@ -33,6 +33,20 @@ outside the tufted area. Coordinates are x, y, w, h in the original photo.
 | 6 | Reflections of reddish objects (leaves) on paint, along dried water-drip trails | Moving 3162,1039,24,11; Moving 1150,1339,33,39; Moving 1088,1364,27,7; Moving 1127,1366,21,5; Moving 2136,1521,32,6 | colour bias from red DLR tufts + streak shape |
 | 7 | Blurred orange/red reflection blobs | Moving 1653,1766,23,17; Moving 1615,1774,41,9 | colour bias from red DLR tufts |
 
+### After full-rotation training (run A360, `runs/car_check_A_vs_A360.jpg`)
+
+Full 360 deg rotation fixed the missed hanging tufts but added false positives on
+line-like structures at every angle, so these matter even more now:
+
+| # | Category | Where | Why |
+|---|---|---|---|
+| 8 | Dried water-drip trails and streaks on paint, any angle | Moving photo, centre-right and lower door | thin, long, curved: tuft-shaped in any orientation |
+| 9 | Tyre tread edges | both photos, lower right | repeated thin bright edges |
+| 10 | Fallen leaves / debris specks | Static photo, lower area | small elongated blobs |
+
+Also missed by both models: wide, overexposed white tufts close to the camera
+(moving photo, lower row). We need positives like those in our own labels.
+
 ## Still to capture (from the project brief)
 
 Panel lines and seams, rivet rows, cables, painted stripes and stencilled text,

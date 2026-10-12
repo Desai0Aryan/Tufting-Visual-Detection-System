@@ -21,8 +21,9 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-# reference palette, light mode: categorical slots 1-3 (validated all-pairs in both modes)
-SERIES = ["#2a78d6", "#eb6834", "#1baf7a"]
+# reference palette, light mode, categorical slots in fixed order (validated for line charts on
+# the adjacent pairlist; slots 3-5 are < 3:1 on the light surface, so every line is direct-labelled)
+SERIES = ["#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#008300", "#6250d6", "#e34948"]
 SURFACE, TEXT, TEXT2, GRID = "#fcfcfb", "#0b0b0b", "#52514e", "#e4e3df"
 
 
@@ -51,21 +52,28 @@ def plot_curves(runs, names, out):
     plt.rcParams.update({"font.size": 10, "axes.edgecolor": GRID, "axes.labelcolor": TEXT2,
                          "xtick.color": TEXT2, "ytick.color": TEXT2, "text.color": TEXT})
     fig, axes = plt.subplots(2, 2, figsize=(12, 7.5), facecolor=SURFACE)
+    direct = len(logs) <= 2  # with more runs, labels collide: legend only, exact values in the table
     for ax, (key, title, ylim) in zip(axes.ravel(), panels):
+        if ylim and not direct:  # converged runs differ in the 3rd decimal: zoom on the settled range
+            settled = np.concatenate([lg[key][2:] for lg in logs if key in lg])
+            lo = float(np.floor((np.nanmin(settled) - 0.02) * 20) / 20)
+            ylim, title = (max(0.0, lo), 1.0), title + f", y from {max(0.0, lo):.2f}"
         ax.set_facecolor(SURFACE)
         for i, (lg, nm) in enumerate(zip(logs, names)):
             if key not in lg:
                 continue
             x, y = lg["epoch"], lg[key]
             ax.plot(x, y, color=SERIES[i], lw=2, label=nm, solid_capstyle="round")
-            ax.annotate(nm, (x[-1], y[-1]), xytext=(6, 0), textcoords="offset points",
-                        color=TEXT2, va="center", fontsize=9)
+            if direct:
+                ax.annotate(nm, (x[-1], y[-1]), xytext=(6, 0), textcoords="offset points",
+                            color=TEXT2, va="center", fontsize=9)
             if key.endswith("_dice") or "cldice" in key:
                 b = int(np.nanargmax(y))
                 ax.plot(x[b], y[b], "o", ms=8, color=SERIES[i], mec=SURFACE, mew=2)
-                above = ylim is None or y[b] < ylim[0] + 0.9 * (ylim[1] - ylim[0])
-                ax.annotate(f"{y[b]:.3f}", (x[b], y[b]), xytext=(0, 9 if above else -14),
-                            textcoords="offset points", ha="center", color=TEXT2, fontsize=8)
+                if direct:
+                    above = ylim is None or y[b] < ylim[0] + 0.9 * (ylim[1] - ylim[0])
+                    ax.annotate(f"{y[b]:.3f}", (x[b], y[b]), xytext=(0, 9 if above else -14),
+                                textcoords="offset points", ha="center", color=TEXT2, fontsize=8)
         ax.set_title(title, loc="left", color=TEXT, fontsize=10.5)
         ax.set_xlabel("epoch")
         if ylim:
@@ -73,7 +81,7 @@ def plot_curves(runs, names, out):
         ax.grid(True, color=GRID, lw=0.8)
         ax.spines[["top", "right"]].set_visible(False)
         ax.legend(frameon=False, loc="best", fontsize=9, labelcolor=TEXT2)
-    fig.suptitle(" vs ".join(names) + " - " + ", ".join(Path(r).name for r in runs), x=0.01, ha="left",
+    fig.suptitle(" vs ".join(names) + "   (dots = best epoch per run)", x=0.01, ha="left",
                  color=TEXT2, fontsize=9)
     fig.tight_layout()
     fig.savefig(out, dpi=130, facecolor=SURFACE)

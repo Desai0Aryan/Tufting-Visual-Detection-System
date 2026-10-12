@@ -13,12 +13,14 @@ class AppSettings:
     threshold: float = 0.0          # 0 = use the checkpoint's own threshold
     polarity: str = "light"         # classical backend
     min_length_px: float = 15.0
+    max_length_px: float = 400.0
     overlays: list = field(default_factory=lambda: ["arrows", "ids", "stall"])
     last_dir: str = ""
 
     def pipeline_dict(self):
         return {"backend": self.backend, "checkpoint": self.checkpoint, "threshold": self.threshold,
-                "polarity": self.polarity, "min_length_px": self.min_length_px}
+                "polarity": self.polarity, "min_length_px": self.min_length_px,
+                "max_length_px": self.max_length_px}
 
 
 def load(settings=None):

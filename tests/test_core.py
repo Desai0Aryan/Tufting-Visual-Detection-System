@@ -50,6 +50,14 @@ class TrackerTests(unittest.TestCase):
         self.assertEqual(sorted(t.track_id for t in out), [1, 2])
         self.assertTrue(all(t.state == "confirmed" for t in out))
 
+    def test_noise_does_not_use_up_ids(self):
+        tr = tracker()
+        for f in range(10):  # a flickering false detection appears every other frame
+            dets = [det(100, 50)] + ([det(300 + 40 * f, 50)] if f % 2 else [])
+            out = tr.update(GRAY, dets, f)
+        self.assertEqual([t.track_id for t in out if t.state == "confirmed"], [1])
+        self.assertEqual(tr.next_id, 2)
+
     def test_tentative_until_confirmed_and_dropped_on_miss(self):
         tr = tracker()
         out = tr.update(GRAY, [det(100, 50)], 0)
@@ -76,7 +84,7 @@ class TrackerTests(unittest.TestCase):
         for f in range(4):
             tr.update(GRAY, [det(100, 50)], f)
         out = tr.update(GRAY, [det(200, 50)], 4)  # 100 px away: new track, old one missing
-        self.assertEqual(sorted((t.track_id, t.state) for t in out), [(1, "missing"), (2, "tentative")])
+        self.assertEqual(sorted((t.track_id, t.state) for t in out), [(-2, "tentative"), (1, "missing")])
 
     def test_stall_labels(self):
         tr = tracker()

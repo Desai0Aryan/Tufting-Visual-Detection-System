@@ -93,11 +93,15 @@ class SettingsDialog(QDialog):
         self.minlen = QDoubleSpinBox()
         self.minlen.setRange(1, 2000)
         self.minlen.setValue(cfg.min_length_px)
+        self.maxlen = QDoubleSpinBox()
+        self.maxlen.setRange(2, 20000)
+        self.maxlen.setValue(cfg.max_length_px)
         form.addRow("Detector backend", self.backend)
         form.addRow("U-Net checkpoint", row)
         form.addRow("Confidence threshold", self.thr)
         form.addRow("Classical: tufts are", self.polarity)
         form.addRow("Min tuft length (px)", self.minlen)
+        form.addRow("Max tuft length (px)", self.maxlen)
         self.ov_boxes = {}
         for ov in overlays():
             if ov.toggleable:
@@ -121,6 +125,7 @@ class SettingsDialog(QDialog):
         c = self.cfg
         c.backend, c.checkpoint = self.backend.currentText(), self.ckpt.text().strip()
         c.threshold, c.polarity, c.min_length_px = self.thr.value(), self.polarity.currentText(), self.minlen.value()
+        c.max_length_px = max(self.maxlen.value(), c.min_length_px + 1)
         c.overlays = [n for n, cb in self.ov_boxes.items() if cb.isChecked()]
         return c
 

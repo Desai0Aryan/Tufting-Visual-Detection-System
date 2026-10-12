@@ -169,6 +169,47 @@ python main.py --image frame.png --backend unet --weights runs\<run>\checkpoints
 Detection always runs at native resolution; set `--min/max-length-px` and
 `--min/max-area` to match how large tufts are in your footage.
 
+## TuftView desktop app
+
+```powershell
+python -m app                         # or: python -m app path	oideo.mp4
+```
+
+Open a video (File > Open, or drag it onto the window; MP4 / MOV / AVI, 720p-1440p).
+Processing runs in a background thread: detector (U-Net or classical) -> geometry
+(root, tip, tip tangent) -> tracker (persistent IDs, stall state). Results are cached
+per frame, so scrubbing back never reprocesses; playback waits at the processing front.
+
+![TuftView](docs/screenshots/tuftview_main.jpg)
+
+*Classical backend on a YouTube stall clip. Arrows show the flow direction at each tip,
+coloured by stall state (green attached, yellow unsteady, red separated, grey not yet
+known). Tufts 34 and 36 are selected (magenta); the side panel shows their angle,
+length, length ratio, stall state and angle over the last 10 s. The red marks around the
+window frame and over the sea are false detections of the classical threshold.*
+
+| Control | Action |
+|---|---|
+| Space, Left / Right | play / pause, step one frame |
+| Scrub bar, speed box | jump to a frame, 0.25x - 4x playback |
+| Click / Ctrl+click a tuft | select it / add or remove it (view only, no editing) |
+| View menu or toolbar | toggle mask, flow arrows, IDs, stall colour |
+| File > Export (Ctrl+E) | annotated MP4, per-frame CSV of all tufts, CSV of selected tufts |
+| File > Settings (Ctrl+,) | backend, checkpoint, confidence threshold, length limits, overlays (saved) |
+
+The status bar shows processing fps, frame number, tuft count and CPU/GPU.
+
+Architecture (for adding features):
+- `core/` has no Qt: `Pipeline.process_frame(frame) -> FrameResult` (tufts with track
+  IDs and stall labels, mask), `Tracker` (with a `PointPredictor` interface for a
+  learned point tracker later), `FrameSource` (`VideoFileSource`; `CameraSource` is a
+  placeholder), CSV export.
+- `app/overlays/`: register a new overlay with `@register_overlay` (it draws with
+  OpenCV, so it appears in exports too).
+- `app/panels/`: register a new side panel with `@register_panel` (gets frame and
+  selection updates).
+- Resources load through `app.resource_path()`, which also works in a PyInstaller bundle.
+
 ## Tests
 
 ```powershell

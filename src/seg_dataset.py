@@ -32,6 +32,7 @@ class Item:
     stem: str
     group: str            # "real" or "synthetic"
     domain: str = "own"   # where the frames come from: "own", "dlr", ... (meta.json "domain")
+    weight: float = 1.0   # tuft-loss weight for this sample's label source (data.source_weights)
 
 
 def _to_tensors(rgb, label, classes):
@@ -109,7 +110,10 @@ class TrainCrops:
         if dtf is not None:
             dtf.set_random_seed(int(rng.integers(2 ** 31)))
             out["image"] = dtf(image=out["image"])["image"]
-        return _to_tensors(out["image"], out["mask"], self.classes)
+        img, tgt, valid = _to_tensors(out["image"], out["mask"], self.classes)
+        if item.weight != 1.0:
+            valid[1] *= item.weight
+        return img, tgt, valid
 
 
 class EpochSampler:

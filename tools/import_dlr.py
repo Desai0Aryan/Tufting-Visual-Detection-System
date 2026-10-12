@@ -2,6 +2,8 @@
 
     python -m tools.import_dlr polygons      # HABLEG LabelMe polygons -> masks   (data/dlr/hableg_polygons)
     python -m tools.import_dlr boxes         # HABLEG VOC boxes -> SAM 2 masks    (data/dlr/hableg_sam2/proposed)
+    python -m tools.import_dlr promote       # accept SAM 2 proposals of train sessions -> data/dlr/hableg_sam2/labeled
+    python -m tools.import_dlr clean         # glare blobs / fat merged masks -> cleared + ignore region
     python -m tools.import_dlr tracks        # HABLEG boxes with persistent IDs -> tracker ground truth CSVs
     python -m tools.import_dlr sheet --data data/dlr/hableg_polygons --out data/dlr/preview_polygons.jpg
 
@@ -238,6 +240,8 @@ def cmd_boxes(a):
     print(f"proposed {len(stems)} frames in {time.time() - t0:.0f}s; boxes SAM could not segment: {n_rej}")
 
     # 3) review batch: a fixed random sample, stratified over sessions
+    if a.review_n <= 0:
+        return 0
     all_stems = sorted(list_samples(a.out))
     rng = random.Random(a.seed)
     by = collections.defaultdict(list)
@@ -251,6 +255,103 @@ def cmd_boxes(a):
         k += 1
     (Path(a.out) / "review_batch1.txt").write_text("\n".join(sorted(batch)) + "\n")
     print(f"review batch of {len(batch)} frames -> {Path(a.out) / 'review_batch1.txt'}")
+    return 0
+
+
+# ---------------------------------------------------------------- accept proposals
+def cmd_promote(a):
+    """Copy proposals of TRAIN sessions (per sources.csv) to the labelled set, with
+    their ignore regions and JSON. Validation sessions are never promoted: their
+    validation labels are the human polygons only."""
+    import shutil
+    split_map = load_split_map("sources.csv")
+    src, dst = Path(a.src), Path(a.out)
+    meta = json.loads((src / "meta.json").read_text())
+    batch = set((src / a.batch_file).read_text().split()) if (src / a.batch_file).exists() else set()
+    out_meta_p = dst / "meta.json"
+    out_meta = json.loads(out_meta_p.read_text()) if out_meta_p.exists() else {}
+    counts = collections.Counter()
+    for stem, m in sorted(meta.items()):
+        split = split_map.get(m["clip_id"])
+        if split != "train" or m.get("status") not in ("proposed", "accepted"):
+            counts[f"skipped ({split}, {m.get('status')})"] += 1
+            continue
+        for sub, ext in (("images", ".png"), ("labels", ".png"), ("ignore", ".png"), ("json", ".json")):
+            f = src / sub / f"{stem}{ext}"
+            if f.exists():
+                (dst / sub).mkdir(parents=True, exist_ok=True)
+                shutil.copy2(f, dst / sub / f.name)
+        how = "approved_visually_batch1_no_edits" if stem in batch else a.approval
+        out_meta[stem] = dict(m, status="accepted", split=split, reviewed=False, approval=how)
+        meta[stem] = dict(m, status="accepted")
+        counts[how] += 1
+    out_meta_p.write_text(json.dumps(out_meta, indent=1))
+    (src / "meta.json").write_text(json.dumps(meta, indent=1))
+    print(dict(counts))
+    return 0
+
+
+# ---------------------------------------------------------------- automatic clean-up
+def cmd_clean(a):
+    """Per accepted box: a mask that is mostly near-white (glare) or far wider than that
+    tuft ID usually is (tuft + shadow merged, filled loops) is cleared and its box
+    (padded) becomes an ignore region: no loss either way. Logged in meta.json."""
+    from skimage.morphology import skeletonize
+    D = Path(a.data)
+    meta = json.loads((D / "meta.json").read_text())
+    per = []
+    for f in sorted((D / "json").glob("*.json")):
+        img = cv2.imread(str(D / "images" / f"{f.stem}.png"))
+        lab = cv2.imread(str(D / "labels" / f"{f.stem}.png"))[..., 0] > 127
+        hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
+        glare = (hsv[..., 1] < 40) & (hsv[..., 2] > 225)
+        for b in json.loads(f.read_text()).get("guide_boxes", []):
+            if not b["accepted"]:
+                continue
+            x0, y0, x1, y1 = (int(round(v)) for v in b["box"])
+            sl = (slice(max(y0 - 2, 0), y1 + 3), slice(max(x0 - 2, 0), x1 + 3))
+            m = lab[sl]
+            if m.sum() < 20:
+                continue
+            per.append({"stem": f.stem, "id": b["id"], "box": (x0, y0, x1, y1),
+                        "glare": float((glare[sl] & m).sum() / m.sum()),
+                        "width": float(m.sum() / max(skeletonize(m).sum(), 1))})
+    med = collections.defaultdict(list)
+    for r in per:
+        med[r["id"]].append(r["width"])
+    med = {k: float(np.median(v)) for k, v in med.items()}
+    flagged = [dict(r, width_ratio=round(r["width"] / med[r["id"]], 2)) for r in per
+               if r["glare"] > a.max_glare or r["width"] / med[r["id"]] > a.max_width_ratio]
+    by = collections.defaultdict(list)
+    for r in flagged:
+        by[r["stem"]].append(r)
+    for stem, rs in by.items():
+        lab_p, ign_p = D / "labels" / f"{stem}.png", D / "ignore" / f"{stem}.png"
+        lab = cv2.imread(str(lab_p))
+        ign = cv2.imread(str(ign_p), cv2.IMREAD_GRAYSCALE) if ign_p.exists() else np.zeros(lab.shape[:2], np.uint8)
+        for r in rs:
+            x0, y0, x1, y1 = r["box"]
+            ys, xs = slice(max(y0 - a.pad, 0), y1 + a.pad + 1), slice(max(x0 - a.pad, 0), x1 + a.pad + 1)
+            lab[ys, xs, 0] = 0
+            lab[ys, xs, 1] = 0
+            ign[ys, xs] = 255
+        cv2.imwrite(str(lab_p), lab)
+        info_p = D / "json" / f"{stem}.json"
+        info = json.loads(info_p.read_text())
+        mask = (lab[..., 0] > 127).astype(np.uint8) * 255
+        tufts = tufts_from_mask(mask) if mask.any() else []
+        from src.label_io import tuft_records
+        info["tufts"] = tuft_records(tufts)
+        info_p.write_text(json.dumps(info, indent=1))
+        (D / "ignore").mkdir(exist_ok=True)
+        cv2.imwrite(str(ign_p), ign)
+        meta[stem]["auto_fixed_boxes"] = [{"id": r["id"], "glare": round(r["glare"], 2),
+                                            "width_ratio": r["width_ratio"]} for r in rs]
+    (D / "meta.json").write_text(json.dumps(meta, indent=1))
+    (D / "clean_report.json").write_text(json.dumps({"max_glare": a.max_glare, "max_width_ratio": a.max_width_ratio,
+                                                     "boxes_checked": len(per), "fixed": flagged}, indent=1, default=str))
+    print(f"checked {len(per)} boxes; cleared + ignored {len(flagged)} boxes in {len(by)} frames: "
+          f"{sorted((r['stem'], r['id']) for r in flagged)}")
     return 0
 
 
@@ -353,6 +454,18 @@ def main(argv=None):
     p.add_argument("--limit", type=int, default=None)
     p.add_argument("--skip-check", action="store_true")
     p.set_defaults(fn=cmd_boxes)
+    p = sub.add_parser("promote")
+    p.add_argument("--src", default="data/dlr/hableg_sam2/proposed")
+    p.add_argument("--out", default="data/dlr/hableg_sam2/labeled")
+    p.add_argument("--batch-file", default="review_batch1.txt")
+    p.add_argument("--approval", default="bulk_accepted_after_batch1")
+    p.set_defaults(fn=cmd_promote)
+    p = sub.add_parser("clean")
+    p.add_argument("--data", default="data/dlr/hableg_sam2/labeled")
+    p.add_argument("--max-glare", type=float, default=0.3, help="max near-white fraction of a box's mask")
+    p.add_argument("--max-width-ratio", type=float, default=2.5, help="max width vs that tuft ID's median")
+    p.add_argument("--pad", type=int, default=4)
+    p.set_defaults(fn=cmd_clean)
     p = sub.add_parser("tracks")
     p.add_argument("--out", default="data/dlr/hableg_tracks")
     p.set_defaults(fn=cmd_tracks)

@@ -95,5 +95,18 @@ class IgnoreRegionTests(unittest.TestCase):
             self.assertGreater(float(f(other, tgt)[0]), float(f(base, tgt)[0]) + 0.01)  # without ignore it counts
 
 
+
+@unittest.skipUnless(HAS_TORCH, "torch not installed")
+class SourceWeightTests(unittest.TestCase):
+    def test_half_weight_halves_bce_even_in_a_uniform_batch(self):
+        import torch
+        from src.losses import bce_loss
+        logits, tgt = torch.randn(2, 1, 16, 16), (torch.rand(2, 1, 16, 16) > 0.8).float()
+        full = bce_loss(logits, tgt, 2.0, torch.ones_like(tgt))
+        half = bce_loss(logits, tgt, 2.0, torch.full_like(tgt, 0.5))
+        self.assertAlmostEqual(float(half), 0.5 * float(full), places=5)
+        self.assertAlmostEqual(float(full), float(bce_loss(logits, tgt, 2.0)), places=5)
+
+
 if __name__ == "__main__":
     unittest.main()

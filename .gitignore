@@ -1,8 +1,31 @@
-outputs/
+# Python
 __pycache__/
 *.pyc
+.pytest_cache/
+
+# Virtual environments
 .venv/
+.venv-*/
 venv/
+
+# Secrets / local config
 .env
+.claude/settings.local.json
+
+# OS clutter
+.DS_Store
+Thumbs.db
+
+# Large data: keep on disk, never in git
+data/
+models/
+runs/
+output/
+outputs/
+Images/
 *.pt
 *.pth
+*.mp4
+*.avi
+*.mov
+*.mkv

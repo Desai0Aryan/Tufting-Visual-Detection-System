@@ -58,6 +58,11 @@ class TuftDetector:
 
     def detect(self, image):
         """Detect tufts in a BGR (or grayscale) image and return a list of Tuft."""
+        return self.detect_full(image)[0]
+
+    def detect_full(self, image):
+        """Like detect(), but also returns the backend's MaskResult and the ROI
+        offset: (tufts, mask_result, (x, y)). The mask is in ROI coordinates."""
         if image is None or not hasattr(image, "shape") or image.size == 0:
             raise ValueError("image must be a non-empty numpy array")
 
@@ -94,4 +99,4 @@ class TuftDetector:
         )
         if anchor is not None:
             tufts = one_per_anchor(tufts, self.tape_max_dist)
-        return tufts
+        return tufts, result, offset

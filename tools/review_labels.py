@@ -3,7 +3,8 @@
     python -m tools.review_labels --data data/real/proposed --out data/real/labeled
 
 Window shows the frame with the mask (green), each tuft's root (red dot) and
-tip-tangent arrow (cyan), SAM-rejected candidates (thin red outline) and
+tip-tangent arrow (cyan), SAM-rejected candidates (thin red outline), dataset boxes when present (orange;
+red = SAM produced no mask for that box) and
 ignore regions (blue tint: no training loss there).
 
   a  accept frame -> copied to --out (training data), next
@@ -121,6 +122,9 @@ class ReviewApp:
             for i, c in enumerate(s.rejected):
                 if not s.restored[i]:
                     cv2.drawContours(img, [c], -1, RED, 1)
+            for b in s.info.get("guide_boxes", []):  # dataset boxes the mask was prompted from
+                x0, y0, x1, y1 = (int(v) for v in b["box"])
+                cv2.rectangle(img, (x0, y0), (x1, y1), (0, 165, 255) if b.get("accepted", True) else RED, 1)
             lw = max(1, int(round(1.5 / self.scale())))
             for t in s.tufts:
                 r = tuple(int(round(v)) for v in t.root)
@@ -214,12 +218,16 @@ def main(argv=None):
     ap.add_argument("--log", default=None, help="default: <out>/../review_log.jsonl")
     ap.add_argument("--all", action="store_true", help="also show frames already decided")
     ap.add_argument("--clips", nargs="*", default=None)
+    ap.add_argument("--stems-file", default=None, help="review only the frames listed (one stem per line)")
     a = ap.parse_args(argv)
 
     meta = json.loads((Path(a.data) / "meta.json").read_text()) if (Path(a.data) / "meta.json").exists() else {}
     stems = [s for s in list_samples(a.data)
              if (a.all or meta.get(s, {}).get("status", "proposed") == "proposed")
              and (not a.clips or meta.get(s, {}).get("clip_id") in set(a.clips))]
+    if a.stems_file:
+        wanted = set(Path(a.stems_file).read_text().split())
+        stems = [s for s in stems if s in wanted]
     if not stems:
         print("nothing to review")
         return 0

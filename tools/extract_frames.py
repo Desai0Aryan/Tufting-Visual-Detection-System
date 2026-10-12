@@ -19,7 +19,7 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from src.frame_select import farthest_point_sample, feature_matrix, per_clip_quota, scan_video  # noqa: E402
-from src.sources import read_sources  # noqa: E402
+from src.sources import is_dataset, read_sources  # noqa: E402
 
 FIELDS = ["clip_id", "frame_idx", "time_s", "brightness", "contrast", "motion", "use", "split", "file"]
 
@@ -56,7 +56,7 @@ def main(argv=None):
     ap.add_argument("--dup-thresh", type=float, default=0.02, help="near-duplicate threshold (thumbnail MSE)")
     a = ap.parse_args(argv)
 
-    rows = read_sources(a.sources)
+    rows = [r for r in read_sources(a.sources) if not is_dataset(r)]  # image datasets have no video
     if a.clips:
         rows = [r for r in rows if r["clip_id"] in set(a.clips)]
         missing = set(a.clips) - {r["clip_id"] for r in rows}

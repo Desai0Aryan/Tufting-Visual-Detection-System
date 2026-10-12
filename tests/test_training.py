@@ -102,7 +102,7 @@ class TrainLoopTests(unittest.TestCase):
                 self.assertTrue((run / f).exists(), f)
             rows = list(csv.DictReader(open(run / "log.csv")))
             self.assertEqual(len(rows), 2)
-            self.assertNotEqual(rows[0]["val_dice"], "")
+            self.assertNotEqual(rows[0]["val_own_dice"], "")
             split = json.loads((run / "split.json").read_text())
             used = split["real"][f"{d}/real"]["train"] + split["real"][f"{d}/real"]["val"]
             self.assertFalse([s for s in used if s.startswith("t__")])  # test clip never loaded
@@ -156,6 +156,32 @@ class IgnoreDatasetTests(unittest.TestCase):
             self.assertEqual(tuple(valid.shape), (2, 64, 64))
             self.assertEqual(float(valid[1, :16, :16].sum()), 0.0)
             self.assertEqual(float(valid[1, 16:, 16:].min()), 1.0)
+
+
+
+class DomainAugTests(unittest.TestCase):
+    def test_colour_aug_applies_to_dlr_items_only(self):
+        from src.label_io import save_frame
+        from src.seg_dataset import Item, TrainCrops
+        with tempfile.TemporaryDirectory() as d:
+            img = np.zeros((96, 96, 3), np.uint8); img[..., 2] = 200  # red (BGR)
+            m = np.zeros((96, 96), np.uint8)
+            for dom in ("own", "dlr"):
+                save_frame(f"{d}/{dom}", "c__f0", img, m, [], {"clip_id": "c", "domain": dom})
+            aug = {k: 0.0 for k in ("flip_p", "affine_p", "elastic_p", "brightness_contrast_p", "gamma_p", "hue_p",
+                                    "shadow_gradient_p", "shadow_polygon_p", "glare_p", "blur_p", "noise_p",
+                                    "compression_p")}
+            aug["domain"] = {"dlr": {"hue_p": 0.0, "gray_p": 1.0, "invert_p": 0.0}}
+            for dom, gray in (("own", False), ("dlr", True)):
+                ds = TrainCrops([Item(f"{d}/{dom}", "c__f0", "real", dom)], size=64, epoch_size=1, aug=aug)
+                x = ds[0][0]
+                is_gray = bool(torch_allclose(x[0], x[1]) and torch_allclose(x[1], x[2]))
+                self.assertEqual(is_gray, gray, dom)
+
+
+def torch_allclose(a, b):
+    import torch
+    return torch.allclose(a, b, atol=2 / 255)
 
 
 if __name__ == "__main__":

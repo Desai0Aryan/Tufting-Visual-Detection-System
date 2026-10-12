@@ -1,0 +1,51 @@
+# SAM 2 auto-labelling. Classical candidates prompt SAM 2; the reviewer is the final gate.
+sam2:
+  checkpoint: models/sam2/sam2.1_hiera_large.pt   # quality first; labelling is offline
+  config: configs/sam2.1/sam2.1_hiera_l.yaml
+  min_side: 512           # window per candidate (px), grows with tuft size
+  strict: true            # SAM disagreement -> candidate rejected (still shown in review)
+accept:
+  min_iou: 0.25
+  min_cover: 0.6
+  max_area_ratio: 4.0
+propagate:
+  frames: 0               # SAM 2 video propagation to the next N frames of each keyframe (0 = off)
+  every: 2                # keep every k-th propagated frame
+
+# Classical candidate settings. `default` applies to every clip; per-clip
+# blocks override it (key = clip_id from sources.csv).
+detector:
+  default:
+    polarity: auto        # dark | light | auto (try both, keep more candidates)
+    tape_root: false
+    roi: null             # [x, y, w, h] or null
+    block_size: 51
+    c: 10
+    min_area: 30
+    max_area: 50000
+    min_elongation: 3.0
+    min_length_px: 25
+    max_length_px: 1500
+clips:
+  own_car_static:         # Images/Car image Static..jpg (aditya-wip settings)
+    polarity: light
+    tape_root: true
+    roi: [600, 650, 1650, 650]
+    block_size: 101
+    c: 30
+    min_area: 500
+    max_area: 20000
+    min_elongation: 4
+    min_length_px: 100
+    max_length_px: 600
+  own_car_moving:         # Images/car image moving.jpg
+    polarity: light
+    tape_root: true
+    roi: [740, 480, 2100, 620]
+    block_size: 101
+    c: 30
+    min_area: 500
+    max_area: 20000
+    min_elongation: 4
+    min_length_px: 100
+    max_length_px: 900

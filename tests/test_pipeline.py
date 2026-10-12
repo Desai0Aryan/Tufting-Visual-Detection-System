@@ -16,9 +16,10 @@ class PipelineTests(unittest.TestCase):
         args = parse_args(["--image", str(SAMPLE)])
         self.assertEqual(args.image, str(SAMPLE))
 
-        args = parse_args([str(SAMPLE), "--out-dir", "outputs"])
+        args = parse_args([str(SAMPLE), "--out-dir", "results"])
         self.assertEqual(args.image, str(SAMPLE))
-        self.assertEqual(args.outdir, "outputs")
+        self.assertEqual(args.outdir, "results")
+        self.assertEqual(parse_args([str(SAMPLE)]).outdir, "results")
 
     def test_detector_preserves_original_coordinate_system(self):
         image = cv2.imread(str(SAMPLE))

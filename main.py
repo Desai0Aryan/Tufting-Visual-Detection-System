@@ -7,11 +7,11 @@ import cv2
 import numpy as np
 import pandas as pd
 
-from detector import TuftDetector, draw_tufts
-from src.backends import build_backend
+from detector import draw_tufts
 from src.export import tufts_dataframe
-from src.filtering import DEFAULT_NORM_SIZE, clean_tufts, normalize_scale, rescale_tufts, scale_roi
+from src.filtering import DEFAULT_NORM_SIZE
 from src.mask_to_tufts import VECTOR_MODES
+from src.pipeline import FramePipeline, clamp_roi as _clamp_roi  # noqa: F401 (_clamp_roi kept for old imports)
 from src.image_io import (
     ImageLoadError,
     annotate_info_banner,
@@ -20,6 +20,7 @@ from src.image_io import (
     resize_max_dim,
     save_image,
 )
+from src.video_io import VideoError, VideoReader, is_video_path
 
 
 def parse_roi(value: str) -> tuple[int, int, int, int]:
@@ -58,32 +59,39 @@ def _validate_roi(roi, image_shape):
     return roi
 
 
-def _clamp_roi(roi, shape):
-    """Rounding when an ROI is rescaled can overshoot the image by a pixel."""
-    if roi is None:
-        return None
-    x, y, w, h = roi
-    H, W = shape[:2]
-    x, y = min(max(x, 0), W - 1), min(max(y, 0), H - 1)
-    return x, y, max(1, min(w, W - x)), max(1, min(h, H - y))
-
-
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Detect tufts and flow vectors in a single image."
+        description="Detect tufts and flow vectors in an image or an MP4 video."
     )
     # Keep the old positional form working while supporting the image-processing
     # branch's --image interface.
-    parser.add_argument("image_positional", nargs="?", help="Path to input image")
+    parser.add_argument("image_positional", nargs="?",
+                        help="Path to input image or video (video is detected by extension)")
     parser.add_argument("--image", dest="image_option", help="Path to input image")
+    parser.add_argument("--video", dest="video_option", help="Path to input video (.mp4 etc.)")
     parser.add_argument(
-        "--outdir", "--out-dir", dest="outdir", default="outputs",
+        "--outdir", "--out-dir", dest="outdir", default="results",
         help="Directory for generated images and CSV data",
     )
     parser.add_argument("--roi", type=parse_roi, default=None,
                         help="Restrict detection to x,y,w,h (pixels)")
     parser.add_argument("--select-roi", action="store_true",
                         help="Interactively select the ROI before detection")
+    video = parser.add_argument_group("video options (only used when the input is a video)")
+    video.add_argument("--frame-step", type=int, default=1,
+                       help="process every Nth frame (default 1 = every frame). The output "
+                            "video then only contains the processed frames, at fps/N")
+    video.add_argument("--max-frames", type=int, default=0,
+                       help="stop after this many processed frames (0 = whole video)")
+    video.add_argument("--save-frames", action="store_true",
+                       help="also write every annotated frame as a PNG in <outdir>/<label>_frames/")
+    video.add_argument("--no-track", action="store_true",
+                       help="skip ID tracking: tuft IDs are then just per-frame numbers")
+    video.add_argument("--track-dist", type=float, default=30.0,
+                       help="tracking: max root movement between frames (px at the detection "
+                            "scale, i.e. after --norm-size) to still count as the same tuft")
+    video.add_argument("--track-max-missing", type=int, default=5,
+                       help="tracking: frames a tuft may go undetected before its ID is retired")
     parser.add_argument("--max-dim", type=int, default=1400,
                         help="Maximum dimension for the preprocessing preview")
     parser.add_argument("--backend", choices=["classical", "unet"], default="classical",
@@ -139,11 +147,19 @@ def parse_args(argv=None):
     parser = _build_parser()
     args = parser.parse_args(argv)
 
-    if args.image_option and args.image_positional:
-        parser.error("provide the image path either positionally or with --image, not both")
-    args.image = args.image_option or args.image_positional
+    given = [v for v in (args.image_option, args.video_option, args.image_positional) if v]
+    if len(given) > 1:
+        parser.error("provide the input path only once (positionally, --image or --video)")
+    args.image = args.video_option or args.image_option or args.image_positional
     if not args.image:
-        parser.error("an image path is required (use --image PATH or provide PATH positionally)")
+        parser.error("an input path is required (use --image/--video PATH or provide PATH positionally)")
+    args.is_video = bool(args.video_option) or is_video_path(args.image)
+    if args.frame_step < 1:
+        parser.error("--frame-step must be >= 1")
+    if args.max_frames < 0:
+        parser.error("--max-frames must be >= 0")
+    if args.track_dist <= 0 or args.track_max_missing < 0:
+        parser.error("--track-dist must be > 0 and --track-max-missing >= 0")
 
     if args.max_dim <= 0:
         parser.error("--max-dim must be greater than 0")
@@ -174,13 +190,82 @@ def _next_run_label(outdir: Path, stem: str) -> str:
     return label
 
 
+def _next_video_label(outdir: Path, stem: str) -> str:
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    label = f"{stem}_{timestamp}"
+    suffix = 0
+    while (outdir / f"{label}_annotated.mp4").exists():
+        suffix += 1
+        label = f"{stem}_{timestamp}_{suffix}"
+    return label
+
+
 def _tufts_dataframe(tufts, frame=0, timestamp_s=0.0):
     """Kept for backwards compatibility; the schema now lives in src.export."""
     return tufts_dataframe(tufts, frame=frame, timestamp_s=timestamp_s)
 
 
+def _main_video(args):
+    from src.video_pipeline import process_video
+
+    try:
+        reader = VideoReader(args.image)
+    except VideoError as exc:
+        print(f"[ERROR] {exc}")
+        return 1
+
+    with reader:
+        print(f"Loaded video: {args.image}")
+        total = f"{reader.frame_count} frames" if reader.frame_count else "unknown length"
+        print(f"  Resolution: {reader.width}x{reader.height}  FPS: {reader.fps:.2f}  ({total})")
+
+        try:
+            first = reader.first_frame()
+            roi = _validate_roi(args.roi, first.shape)
+        except (VideoError, ValueError) as exc:
+            print(f"[ERROR] {exc}")
+            return 1
+
+        if args.select_roi:
+            x, y, w, h = cv2.selectROI(
+                "Select ROI (first frame) - press ENTER when done", first, showCrosshair=True
+            )
+            cv2.destroyAllWindows()
+            if w > 0 and h > 0:
+                roi = _validate_roi((x, y, w, h), first.shape)
+            else:
+                print("No ROI selected; using the full frame.")
+
+        outdir = Path(args.outdir)
+        outdir.mkdir(parents=True, exist_ok=True)
+        label = _next_video_label(outdir, Path(args.image).stem)
+
+        pipeline = FramePipeline(args)
+        print("Processing frames (video -> images -> detector -> annotated video)...")
+        try:
+            summary = process_video(args, pipeline, roi, outdir, label, reader)
+        except VideoError as exc:
+            print(f"[ERROR] {exc}")
+            return 1
+
+    if summary["frames"] == 0:
+        print("[ERROR] no frames were processed")
+        return 1
+    print(f"Processed {summary['frames']} frame(s) in {summary['seconds']:.1f}s; "
+          f"mean {summary['mean_tufts']:.1f} tuft(s) per frame")
+    print(f"Annotated video:      {summary['video']}"
+          + ("" if summary["h264"] else "  (mp4v encode; install ffmpeg for H.264 playback "
+                                         "in browsers/PowerPoint)"))
+    print(f"Vector time history:  {summary['csv']}")
+    if summary["frames_dir"]:
+        print(f"Annotated frames:     {summary['frames_dir']}")
+    return 0
+
+
 def main(argv=None):
     args = parse_args(argv)
+    if args.is_video:
+        return _main_video(args)
 
     try:
         image = load_image(args.image)
@@ -223,60 +308,25 @@ def main(argv=None):
             print("No ROI selected; using the full image.")
 
     # Detect on a canonically-scaled copy, then map results back to original pixels.
-    work, scale = normalize_scale(image, args.norm_size)
-    work_roi = _clamp_roi(scale_roi(roi, scale), work.shape)
+    # (The same FramePipeline is what the video path calls once per frame.)
+    pipeline = FramePipeline(args)
+    res = pipeline.process(image, roi=roi)
+    work, work_roi, scale, backend = res.work, res.work_roi, res.scale, res.backend
+    tufts = res.tufts
     if scale != 1.0:
         print(f"  Detecting at {work.shape[1]}x{work.shape[0]} (scale {scale:.3f}); "
               f"results are mapped back to the original image")
-
-    flow_prior = None
-    if args.flow_prior_deg is not None:
-        rad = math.radians(args.flow_prior_deg)
-        flow_prior = (math.cos(rad), -math.sin(rad))  # image coords: y points down
-
-    def run(backend):
-        detector = TuftDetector(
-            min_area=args.min_area, max_area=args.max_area,
-            min_elongation=args.min_elongation,
-            min_length_px=args.min_length_px, max_length_px=args.max_length_px,
-            roi=work_roi, backend=backend, vector_mode=args.vector_mode,
-            flow_prior=flow_prior,
-        )
-        found = detector.detect(work)
-        raw_count = len(found)
-        if not args.no_clean:
-            found = clean_tufts(work, found)
-        return backend, found, raw_count
-
     if args.backend == "classical":
-        pols = ("dark", "light") if args.polarity == "auto" else (args.polarity,)
-        runs = [run(build_backend(
-            "classical", block_size=args.block_size, c=args.c,
-            clahe_clip=args.clahe_clip, clahe_tile=args.clahe_tile, polarity=pol))
-            for pol in pols]
-        backend, tufts, raw_count = max(runs, key=lambda r: len(r[1]))
-        if len(pols) > 1:
+        if args.polarity == "auto":
             print(f"  Polarity auto-selected: {backend.polarity}")
     else:
-        backend, tufts, raw_count = run(
-            build_backend("unet", weights=args.weights, threshold=args.threshold))
         print(f"  U-Net threshold: {backend.threshold:.2f}")
-
+    after_clean = len(tufts) + (res.sam_stats["rejected"] if res.sam_stats else 0)
     if not args.no_clean:
-        print(f"  Tuft-field filter: {raw_count} -> {len(tufts)}")
-
-    if args.verify_sam2 and tufts:
-        from src.sam2_labeler import load_sam2_predictor, verify_tufts_with_sam
-        predictor = load_sam2_predictor(args.sam2_model, config=args.sam2_config,
-                                        checkpoint=args.sam2_checkpoint)
-        before = len(tufts)
-        tufts, sam_stats = verify_tufts_with_sam(work, tufts, predictor)
-        print(f"  SAM 2 verification: {before} -> {len(tufts)} "
-              f"({sam_stats['rejected']} rejected)")
-
-    tufts = rescale_tufts(tufts, 1.0 / scale)
-    for i, t in enumerate(tufts):
-        t.id = i
+        print(f"  Tuft-field filter: {res.raw_count} -> {after_clean}")
+    if res.sam_stats is not None:
+        print(f"  SAM 2 verification: {after_clean} -> {len(tufts)} "
+              f"({res.sam_stats['rejected']} rejected)")
     print(f"Detected {len(tufts)} tuft(s)")
 
     annotated = draw_tufts(image, tufts)

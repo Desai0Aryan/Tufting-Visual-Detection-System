@@ -45,9 +45,9 @@ preview in data/<out>/previews/ before reviewing.
 
 tufts3.jpg and tufts6.jpg are AVIF files despite their .jpg names. Convert first:
 
-mkdir -p outputs/avif-converted
-sips -s format jpeg Images/tufts3.jpg --out outputs/avif-converted/tufts3.jpeg
-sips -s format jpeg Images/tufts6.jpg --out outputs/avif-converted/tufts6.jpeg
+mkdir -p results/avif-converted
+sips -s format jpeg Images/tufts3.jpg --out results/avif-converted/tufts3.jpeg
+sips -s format jpeg Images/tufts6.jpg --out results/avif-converted/tufts6.jpeg
 
 Review (click a tuft to reject, shift-click to flip root/tip, right-drag to reject
 a box, u undo, s save+continue). NOTE: the brush/"select-only"/--scale options this
@@ -88,11 +88,11 @@ python -m tools.eval_detection --data data/vehicle_review --backend unet --weigh
 5. RUN AN IMAGE AND OPEN THE RESULT
 -----------------------------------
 
-python main.py --image Images/tuft4.jpg --backend unet --weights models/tuft_unet_vehicle.pt --outdir output --save-mask
+python main.py --image Images/tuft4.jpg --backend unet --weights models/tuft_unet_vehicle.pt --outdir results --save-mask
 
 Optional extra false-positive filter (needs sam2 installed, slower):
 
-python main.py --image Images/tuft4.jpg --backend unet --weights models/tuft_unet_vehicle.pt --verify-sam2 --outdir output
+python main.py --image Images/tuft4.jpg --backend unet --weights models/tuft_unet_vehicle.pt --verify-sam2 --outdir results
 
 --threshold defaults to the value the checkpoint's own validation picked
 (models/<name>.pt.json); pass it only to override. --no-clean turns off the
@@ -106,7 +106,33 @@ python main.py --image Images/tuft4.jpg --polarity light
 
 Open the newest annotated image:
 
-open "$(ls -t output/*_annotated.png | head -n 1)"
+open "$(ls -t results/*_annotated.png | head -n 1)"
 
-The annotated image, mask, and vector CSV are saved in output/.
+The annotated image, mask, and vector CSV are saved in results/.
 The detector cannot promise a fixed accuracy on arbitrary images; use step 4.
+
+6. RUN A VIDEO  (video -> frames -> same image detector -> annotated video)
+---------------------------------------------------------------------------
+
+Same detector/backends/options as images; just pass an MP4 (detected by extension, or use --video):
+
+python main.py --video Videos/tufts_flight1.mp4 --polarity auto
+python main.py Videos/tufts_flight1.mp4 --backend unet --weights models/tuft_unet_vehicle.pt
+
+Outputs in results/ (the default):
+  <name>_<time>_annotated.mp4   original video with flow arrows + tuft IDs on every frame
+  <name>_<time>_vectors.csv     time history: timestamp_s, frame, tuft_id, root/tip, unit_vector_x/y/z, ...
+
+Video-only options:
+  --frame-step N        process every Nth frame (faster; output video has just those frames, at fps/N)
+  --max-frames N        stop after N processed frames (quick test run)
+  --save-frames         also keep each annotated frame as a PNG in results/<name>_<time>_frames/
+  --select-roi / --roi  pick/give the region on the FIRST frame; it is used for every frame
+  --no-track            don't carry tuft IDs across frames (IDs are then per-frame numbers)
+  --track-dist PX       how far a tuft's root may move between frames and still be the same tuft (30)
+  --track-max-missing N frames a tuft may go undetected before its ID is retired (5)
+
+--polarity auto is decided on the first frame and then kept for the whole video.
+If ffmpeg is installed (brew install ffmpeg) the output is re-encoded to H.264 so it plays in
+browsers/PowerPoint; without it you get OpenCV's mp4v MP4 (plays in VLC/QuickTime).
+Offline only - not live/camera input yet.

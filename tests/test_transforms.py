@@ -26,7 +26,12 @@ def _pair(n):
 class TransformTests(unittest.TestCase):
     def test_geometry_keeps_image_and_all_label_channels_aligned(self):
         from src.transforms import build_train_transform
-        tf, window = build_train_transform(128, dict(GEOMETRY_ONLY, affine_p=1.0, elastic_p=1.0))
+        for rot in (15, 180):
+            self._aligned(rot)
+
+    def _aligned(self, rot):
+        from src.transforms import build_train_transform
+        tf, window = build_train_transform(128, dict(GEOMETRY_ONLY, affine_p=1.0, elastic_p=1.0, rotate_deg=rot))
         img, lab = _pair(window)
         for seed in range(30):
             tf.set_random_seed(seed)
@@ -67,6 +72,9 @@ class TransformTests(unittest.TestCase):
         self.assertGreaterEqual(window_factor({"rotate_deg": 15, "scale": [0.8, 1.25]}),
                                 (np.cos(np.radians(15)) + np.sin(np.radians(15))) / 0.8)
         self.assertAlmostEqual(window_factor({"rotate_deg": 0, "scale": [1, 1]}), 1.02)
+        # full rotation: the worst angle is 45 deg, not 180 deg
+        self.assertAlmostEqual(window_factor({"rotate_deg": 180, "scale": [1, 1]}), np.sqrt(2) + 0.02)
+        self.assertAlmostEqual(window_factor({"rotate_deg": 90, "scale": [0.8, 1]}), np.sqrt(2) / 0.8 + 0.02)
 
 
 if __name__ == "__main__":

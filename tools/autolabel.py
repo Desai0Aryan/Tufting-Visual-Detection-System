@@ -8,8 +8,7 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from src.backends import ClassicalBackend  # noqa: E402
 from src.image_io import load_image  # noqa: E402
-from src.filtering import (DEFAULT_NORM_SIZE, clean_tufts, normalize_scale, polygon_mask,  # noqa: E402
-                           scale_points, scale_roi)
+from src.filtering import clean_tufts, polygon_mask  # noqa: E402
 from src.labeling import STRICT_LABEL_EXTRACT_KW, render_label, save_sample  # noqa: E402
 from src.mask_to_tufts import extract_tufts  # noqa: E402
 from src.overlay import draw_tufts  # noqa: E402
@@ -103,14 +102,10 @@ def propose(image, polarity="dark", c=5, roi=None, field_filter=True, polygon=No
 
 
 def process_image(path, out, labeler="classical", predictor=None, polarity="dark",
-                  c=5, roi=None, tile=1000, min_tufts=3, norm_size=DEFAULT_NORM_SIZE,
+                  c=5, roi=None, tile=1000, min_tufts=3,
                   field_filter=True, strict_sam=True, polygon=None, select_roi=False):
-    image = load_image(str(path))
-    # canonical scale: the size limits, the SAM prompts and the U-Net crops all assume
-    # tufts are ~15-110 px long, which a 4000 px photo violates by 3x
-    image, scale = normalize_scale(image, norm_size)
-    roi = scale_roi(roi, scale)
-    polygon = scale_points(polygon, scale) if polygon is not None else None
+    image = load_image(str(path))  # native resolution: never downscale labels
+    scale = 1.0
     if select_roi:  # per-image polygon, drawn on the (already normalised) image
         polygon = select_polygon(image) or polygon
     h, w = image.shape[:2]
@@ -164,9 +159,6 @@ def main(argv=None):
                          "to cut texture false positives, e.g. Images/Tufts.jpg works at --c 15")
     ap.add_argument("--roi", type=parse_roi, default=None,
                     help="x,y,w,h: only label tufts inside this box (skip sky/ground)")
-    ap.add_argument("--norm-size", type=int, default=DEFAULT_NORM_SIZE,
-                    help="downscale photos so the long side is at most this (0 = off). "
-                         "Use the same value for training data and main.py inference")
     ap.add_argument("--no-field-filter", action="store_true",
                     help="skip the 'must be inside the tuft field' false-positive filter")
     ap.add_argument("--keep-sam-disagreements", action="store_true",
@@ -192,7 +184,7 @@ def main(argv=None):
         predictor = load_sam2_predictor(a.sam2_model, config=a.sam2_config, checkpoint=a.sam2_checkpoint)
     for f in files:
         print(f.name, process_image(f, a.out, a.labeler, predictor, a.polarity, a.c, a.roi,
-                                    norm_size=a.norm_size, field_filter=not a.no_field_filter,
+                                    field_filter=not a.no_field_filter,
                                     strict_sam=not a.keep_sam_disagreements,
                                     polygon=a.roi_polygon, select_roi=a.select_roi))
     print(f"\nnext: python tools/review_labels.py --data {a.out}")

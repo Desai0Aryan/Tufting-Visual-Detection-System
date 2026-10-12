@@ -34,7 +34,8 @@ class OracleBackend:
 class FlowVectorTests(unittest.TestCase):
     def test_classical_recovers_flow_direction_and_root(self):
         scene = make_scene(background="white", seed=1, flow_deg=30)
-        tufts = TuftDetector().detect(scene.image)
+        # truth here is the bulk flow angle (a chord quantity), not the tip tangent
+        tufts = TuftDetector(vector_mode="chord").detect(scene.image)
         pairs = _match(scene.truth, tufts)
         self.assertGreaterEqual(len(pairs), 0.9 * len(scene.truth))
         errs = [angular_error_deg(t.angle_deg, tr["flow_deg"]) for tr, t in pairs]

@@ -170,11 +170,15 @@ class StrictSamTests(unittest.TestCase):
 
 class CliTests(unittest.TestCase):
     def test_defaults(self):
-        a = parse_args(["--image", str(ROOT / "Images" / "sample_tufts1.jpg")])
+        a = parse_args(["--image", str(ROOT / "tests" / "fixtures" / "sample_tufts1.jpg")])
         self.assertIsNone(a.threshold)  # auto from the checkpoint's validation
-        self.assertEqual(a.norm_size, 1400)
-        self.assertFalse(a.no_clean)
-        self.assertFalse(a.verify_sam2)
+        # native resolution only; field filter opt-in; SAM 2 is not part of detection
+        self.assertFalse(hasattr(a, "norm_size"))
+        self.assertFalse(a.clean)
+        self.assertFalse(hasattr(a, "verify_sam2"))
+        self.assertEqual(a.vector_mode, "tip")
+        self.assertFalse(parse_args([str(ROOT / "tests" / "fixtures" / "sample_tufts1.jpg"),
+                                     "--no-clean"]).clean)
 
     def test_end_to_end_on_a_large_image_keeps_original_coordinates(self):
         sc = make_scene(width=2800, height=2100, seed=9, spacing=(190, 150), length_range=(80, 130),
@@ -183,12 +187,14 @@ class CliTests(unittest.TestCase):
             p = Path(d) / "big.png"
             cv2.imwrite(str(p), sc.image)
             pol = "light" if sc.image.mean() < 110 else "dark"
-            self.assertEqual(run_main([str(p), "--outdir", d, "--polarity", pol, "--save-mask"]), 0)
+            # no downscaling any more, so the size limits must match these ~80-130 px tufts
+            self.assertEqual(run_main([str(p), "--outdir", d, "--polarity", pol, "--save-mask",
+                                       "--max-length-px", "200", "--max-area", "2000"]), 0)
             import pandas as pd
             df = pd.read_csv(next(Path(d).glob("big_*_vectors.csv")))
             self.assertGreater(len(df), 10)
             self.assertTrue((df.root_x.between(0, 2800) & df.root_y.between(0, 2100)).all())
-            self.assertGreater(df.length_px.median(), 60)  # original-pixel lengths, not the 1400 px ones
+            self.assertGreater(df.length_px.median(), 60)  # original-pixel lengths
             mask = cv2.imread(str(next(Path(d).glob("big_*_mask.png"))), cv2.IMREAD_GRAYSCALE)
             self.assertEqual(mask.shape, (2100, 2800))
 

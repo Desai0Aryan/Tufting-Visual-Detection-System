@@ -143,9 +143,6 @@ class TrainLoopTests(unittest.TestCase):
         np.testing.assert_array_equal(ci[..., 0] > 127, cl[..., 0] > 127)
 
 
-if __name__ == "__main__":
-    unittest.main()
-
 
 class IgnoreDatasetTests(unittest.TestCase):
     def test_ignore_png_becomes_zero_weight(self):
@@ -159,3 +156,7 @@ class IgnoreDatasetTests(unittest.TestCase):
             self.assertEqual(tuple(valid.shape), (2, 64, 64))
             self.assertEqual(float(valid[1, :16, :16].sum()), 0.0)
             self.assertEqual(float(valid[1, 16:, 16:].min()), 1.0)
+
+
+if __name__ == "__main__":
+    unittest.main()

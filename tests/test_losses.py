@@ -79,9 +79,6 @@ class SoftLossTests(unittest.TestCase):
         self.assertLess(SegLoss()(quiet, tgt)[0], SegLoss()(loud, tgt)[0])
 
 
-if __name__ == "__main__":
-    unittest.main()
-
 
 @unittest.skipUnless(HAS_TORCH, "torch not installed")
 class IgnoreRegionTests(unittest.TestCase):
@@ -96,3 +93,7 @@ class IgnoreRegionTests(unittest.TestCase):
             f = SegLoss(w_cldice=w_cl)
             self.assertAlmostEqual(float(f(base, tgt, valid)[0]), float(f(other, tgt, valid)[0]), places=4)
             self.assertGreater(float(f(other, tgt)[0]), float(f(base, tgt)[0]) + 0.01)  # without ignore it counts
+
+
+if __name__ == "__main__":
+    unittest.main()

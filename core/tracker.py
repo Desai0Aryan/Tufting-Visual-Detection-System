@@ -10,7 +10,10 @@ Per frame:
      (root and tip swapped, tip tangent recomputed). A taped root does not
      move, so this keeps each tuft's orientation consistent from frame to
      frame even when thickness alone cannot tell root from tip;
-  3. unmatched detections start TENTATIVE tracks, CONFIRMED after n_confirm hits;
+  3. unmatched detections start TENTATIVE tracks, CONFIRMED after n_confirm hits.
+     Tentative tracks carry a provisional negative ID; the next permanent ID
+     (1, 2, 3, ...) is assigned on confirmation, so flickering false
+     detections do not use up ID numbers;
   4. unmatched tracks become MISSING and are dropped after max_missing frames.
 
 Stall analysis per confirmed track, over a rolling window:
@@ -156,11 +159,17 @@ class Tracker:
         self.predictor = predictor or LKPredictor()
         self.fps = fps or 30.0
         self.flow_prior_deg = flow_prior_deg
-        self.tracks, self.next_id, self.prev_gray = [], 1, None
+        self.tracks, self.next_id, self.next_tmp, self.prev_gray = [], 1, -1, None
         self.window = max(2, int(round(self.cfg.stall.window_s * self.fps)))
 
     def reset(self):
-        self.tracks, self.next_id, self.prev_gray = [], 1, None
+        self.tracks, self.next_id, self.next_tmp, self.prev_gray = [], 1, -1, None
+
+    def _confirm(self, tr):
+        tr.state = CONFIRMED
+        if tr.id < 0:
+            tr.id = self.next_id
+            self.next_id += 1
 
     def _gate(self, tufts):
         if self.cfg.max_dist_px:
@@ -201,7 +210,7 @@ class Tracker:
                     tr.misses = 0
                     tr.add(t, frame_index)
                     if tr.state != CONFIRMED and tr.hits >= self.cfg.n_confirm:
-                        tr.state = CONFIRMED
+                        self._confirm(tr)
                     elif tr.state == MISSING:
                         tr.state = CONFIRMED
                     matched_t.add(r)
@@ -222,8 +231,11 @@ class Tracker:
         # 3. unmatched detections
         for j, t in enumerate(tufts):
             if j not in matched_d:
-                keep.append(_Track(self.next_id, t, frame_index, self.window))
-                self.next_id += 1
+                tr = _Track(self.next_tmp, t, frame_index, self.window)
+                self.next_tmp -= 1
+                if self.cfg.n_confirm <= 1:
+                    self._confirm(tr)
+                keep.append(tr)
         self.tracks = keep
         self.prev_gray = gray
         return self._report(frame_index)

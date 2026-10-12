@@ -49,3 +49,10 @@ clips:
     min_elongation: 4
     min_length_px: 100
     max_length_px: 900
+  yt__uDv73kafAM:         # dark tufts on a white wing, cabin-window view
+    polarity: dark
+  yt_FcL8hJFZftU:         # short yellow/blue tufts along the leading edge, strong sun
+    polarity: auto
+    min_length_px: 15
+  yt_AzF39CgTzH4:         # white/orange tufts on olive paint; two camera views
+    polarity: auto

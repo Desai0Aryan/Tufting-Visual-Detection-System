@@ -88,24 +88,34 @@ def scan_video(path, clip_id, stride=15, motion_gap=2, dup_thresh=0.02, roi=None
     if max_frames:
         n = min(n, max_frames)
     out, last_thumb = [], None
-    for idx in range(0, max(n - motion_gap, 1), stride):
-        cap.set(cv2.CAP_PROP_POS_FRAMES, idx)
-        ok, f = cap.read()
+    # Read sequentially: grab() skips frames cheaply, while seeking in long-GOP
+    # codecs (AV1, H.264) re-decodes from the previous keyframe on every jump.
+    idx, buf = 0, {}
+    while idx < max(n - motion_gap, 1):
+        want = idx % stride == 0
+        ok = cap.grab()
         if not ok:
             break
-        later = None
-        for _ in range(motion_gap):
-            ok2, later = cap.read()
-            if not ok2:
-                later = None
-                break
-        gray = cv2.cvtColor(f, cv2.COLOR_BGR2GRAY)
-        th = _thumb(gray if roi is None else gray[roi[1]:roi[1] + roi[3], roi[0]:roi[0] + roi[2]])
-        if last_thumb is not None and float(np.mean((th - last_thumb) ** 2)) < dup_thresh:
-            continue  # near-duplicate of the last kept candidate
-        last_thumb = th
-        b, c, m, thumb, hue = frame_features(f, later, roi)
-        out.append(Candidate(clip_id, idx, idx / fps, b, c, m, thumb, hue))
+        if want:
+            ok, f = cap.retrieve()
+            later = None
+            for _ in range(motion_gap):
+                if cap.grab():
+                    _, later = cap.retrieve()
+                idx += 1
+            idx += 1
+            if not ok:
+                continue
+            fidx = idx - 1 - motion_gap
+            gray = cv2.cvtColor(f, cv2.COLOR_BGR2GRAY)
+            th = _thumb(gray if roi is None else gray[roi[1]:roi[1] + roi[3], roi[0]:roi[0] + roi[2]])
+            if last_thumb is not None and float(np.mean((th - last_thumb) ** 2)) < dup_thresh:
+                continue  # near-duplicate of the last kept candidate
+            last_thumb = th
+            b, c, m, thumb, hue = frame_features(f, later, roi)
+            out.append(Candidate(clip_id, fidx, fidx / fps, b, c, m, thumb, hue))
+        else:
+            idx += 1
     cap.release()
     return out, fps
 

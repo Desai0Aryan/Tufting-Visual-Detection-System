@@ -62,8 +62,9 @@ def cmd_add_url(a):
     cid = a.clip_id or f"yt_{info['id']}"
     out = Path(a.clips_dir) / f"{cid}.mp4"
     out.parent.mkdir(parents=True, exist_ok=True)
+    cap = f"[height<={a.max_height}]" if a.max_height else ""
     opts = {"quiet": True, "outtmpl": str(out), "merge_output_format": "mp4",
-            "format": "bv*[height<=1080][ext=mp4]/bv*[height<=1080]/b[height<=1080]"}
+            "format": f"bv*{cap}[ext=mp4]/bv*{cap}/b{cap}"}
     with yt_dlp.YoutubeDL(opts) as ydl:
         ydl.download([a.url])
     stats = video_stats(out)
@@ -76,6 +77,20 @@ def cmd_add_url(a):
                                 resolution=f"{stats['width']}x{stats['height']}@{stats['fps']}",
                                 notes=a.notes))
     print(f"added {cid}: {info.get('title')!r} by {info.get('uploader')} [{lic}] {stats}")
+
+
+def cmd_set_split(a):
+    from src.sources import write_sources
+    rows = read_sources(a.sources)
+    hit = [r for r in rows if r["clip_id"] == a.clip_id]
+    if not hit:
+        raise SystemExit(f"{a.clip_id} is not in {a.sources}")
+    hit[0]["split"] = a.split
+    if a.notes:
+        hit[0]["notes"] = a.notes
+    write_sources(a.sources, rows)
+    print(f"{a.clip_id}: split -> {a.split}")
+    return 0
 
 
 def cmd_check(a):
@@ -103,7 +118,11 @@ def main(argv=None):
     p = sub.add_parser("add-local"); p.add_argument("path"); _common(p); p.set_defaults(fn=cmd_add_local)
     p = sub.add_parser("add-url"); p.add_argument("url"); _common(p)
     p.add_argument("--permission", default=None, help="who granted permission and when (non-CC clips)")
+    p.add_argument("--max-height", type=int, default=0, help="cap the download height (0 = best available)")
     p.set_defaults(fn=cmd_add_url)
+    p = sub.add_parser("set-split"); p.add_argument("clip_id"); p.add_argument("split", choices=SPLITS)
+    p.add_argument("--notes", default=None)
+    p.set_defaults(fn=cmd_set_split)
     sub.add_parser("check").set_defaults(fn=cmd_check)
     sub.add_parser("list").set_defaults(fn=cmd_list)
     a = ap.parse_args(argv)

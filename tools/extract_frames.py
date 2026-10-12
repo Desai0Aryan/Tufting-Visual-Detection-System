@@ -54,6 +54,8 @@ def main(argv=None):
     ap.add_argument("--stride", type=int, default=15, help="scan every N-th frame")
     ap.add_argument("--min-gap-s", type=float, default=0.5, help="min seconds between picked frames")
     ap.add_argument("--dup-thresh", type=float, default=0.02, help="near-duplicate threshold (thumbnail MSE)")
+    ap.add_argument("--exclude", nargs="*", default=[], metavar="CLIP:START-END",
+                    help="skip a time range in seconds, e.g. yt_abc:0-8 (title cards, overlays); repeatable")
     a = ap.parse_args(argv)
 
     rows = [r for r in read_sources(a.sources) if not is_dataset(r)]  # image datasets have no video
@@ -74,11 +76,17 @@ def main(argv=None):
     if index.exists():
         done = {(r["clip_id"], int(r["frame_idx"])) for r in csv.DictReader(open(index, newline=""))}
 
+    excl = {}
+    for e in a.exclude:
+        cid, _, rng = e.rpartition(":")
+        t0, t1 = (float(v) for v in rng.split("-"))
+        excl.setdefault(cid, []).append((t0, t1))
     scans = {}
     for r in rows:
         path = find_clip(a.clips_dir, r["clip_id"])
         cands, fps = scan_video(path, r["clip_id"], a.stride, dup_thresh=a.dup_thresh)
-        cands = [c for c in cands if (c.clip_id, c.frame_idx) not in done]
+        cands = [c for c in cands if (c.clip_id, c.frame_idx) not in done
+                 and not any(t0 <= c.time_s <= t1 for t0, t1 in excl.get(c.clip_id, []))]
         scans[r["clip_id"]] = (r, path, cands)
         print(f"{r['clip_id']}: {len(cands)} candidate frames after near-duplicate removal")
 

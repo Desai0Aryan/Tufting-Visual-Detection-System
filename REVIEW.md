@@ -168,3 +168,46 @@ reviewed first.
 3. **Tuft-field filter.** Off by default for the fixed-camera/video path. OK?
 4. **`Images/` and `output/` in git.** Untrack them too (files stay on disk), or keep the
    sample images tracked as small test fixtures?
+
+## 7. Addendum (2026-10-12): found while building on this code
+
+Decisions taken (from the discussion): one output channel by default, root
+channel optional; tuft-field filter off by default; native resolution only;
+tape-root anchoring ported from `aditya-wip`; real data first, synthetic off.
+
+Conflicts between `aditya-wip` and Aryan's rewrite, and how they were resolved:
+
+| Topic | aditya-wip | Aryan's rewrite | Now |
+|---|---|---|---|
+| Light polarity threshold | negate C on the CLAHE image | invert gray, then threshold | aditya-wip method; the two differ by 5-7 % mask IoU on the car photos, and the car settings were tuned on it |
+| Tape-root anchoring | yes | missing | ported as a root source for the shared geometry |
+| Flow vector | tip tangent | chord by default | tip tangent by default (agreed design); Aryan's test measures against the bulk flow angle, so it now asks for chord explicitly |
+| Skeleton / path | Zhang-Suen + BFS between endpoints | skimage skeleton + double-sweep longest path, smoothed | Aryan's (tested); car photos give the same tuft counts (20, 12), no flips, 2-4 deg median angle difference |
+
+Bugs found in the existing code (left in place where Aryan's tests use them;
+the new pipeline does not use them):
+
+1. `src/sam2_labeler.py` fixed-grid tiling only refines tufts whose bounding
+   box fits inside one 512 px tile with 128 px overlap. At native resolution
+   half the car-photo tufts (about 215 px long) never reached SAM and were
+   marked "rejected". Replaced by `src/sam2_autolabel.py` (one window per tuft).
+2. `src/sam2_labeler.py` negative prompts sit a fixed 6 px off the centre-line;
+   now scaled to the measured yarn width.
+3. `src/dataset.py: crop_or_pad` reflect-pads the image but zero-pads the label,
+   so mirrored tufts would be labelled background. Latent with Aryan's crop
+   sizes; the new dataset pads image and label together.
+4. `tools/review_labels.py` (old) re-rasterised filtered contours on save and
+   dropped tufts outside the size limits. Rewritten; masks are saved pixel-exactly.
+5. `polarity=auto` picks the polarity with more candidates; on a tie the dark
+   polarity traces wide halos around light strings. Auto-labelling now prefers
+   the thinner candidates on a near tie.
+
+Legacy code kept for Aryan's 46 tests (still passing): `UNet` (from-scratch),
+`src/augment.py`, `src/dataset.py`, `split_samples`, `tools/train_unet.py`,
+`tools/make_synthetic_dataset.py`, `tools/eval_detection.py`,
+`src/sam2_labeler.py`. Removing them is a separate decision.
+
+Test changes (assertions that encoded the old defaults): `CliTests.test_defaults`
+(no downscaling, field filter off, tip-tangent default); the large-image
+end-to-end test passes size limits that match its tufts; the bulk-flow test
+uses chord mode explicitly; sample paths moved to `tests/fixtures/`.

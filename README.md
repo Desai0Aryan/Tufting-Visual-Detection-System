@@ -1,0 +1,148 @@
+# Tuft Visual Detection System
+
+Detects tufts (short strings taped to a surface) in video, measures each
+tuft's flow direction (local tangent at the free tip), and will track tufts
+and flag stalled flow. A U-Net with a pretrained resnet34 encoder replaces
+the classical threshold step; everything downstream (skeleton, root/tip,
+tip tangent, CSV) is shared by both backends.
+
+SAM 2 is used **only** to build training labels, never for detection.
+
+## Status
+
+| Step | State |
+|---|---|
+| Review of the original U-Net work | `REVIEW.md` |
+| Model, loss, augmentation, trainer (YAML) | done, tested; not yet trained on real data |
+| Real-data pipeline: sources, frame selection, SAM 2 auto-label, review tool, model-in-the-loop | done, tested; waiting for footage |
+| Synthetic generator (`synth_tufts.py`) | not started (off by default; ablation will decide if it is used) |
+| `evaluate.py`, video input, tracker | not started |
+
+No accuracy numbers exist yet. Every result will come from `evaluate.py`.
+
+## Setup (Windows, RTX 5090)
+
+```powershell
+py -3.11 -m venv .venv-unet
+.venv-unet\Scripts\python -m pip install --upgrade pip
+.venv-unet\Scripts\python -m pip install -r Requirements-train.txt
+# albumentations pulls in headless OpenCV, which breaks the review window:
+.venv-unet\Scripts\python -m pip uninstall -y opencv-python opencv-python-headless
+.venv-unet\Scripts\python -m pip install --no-deps opencv-python==5.0.0.93
+# SAM 2 (labels only), pinned commit, without the optional CUDA extension:
+.venv-unet\Scripts\python -m pip install setuptools wheel
+$env:SAM2_BUILD_CUDA=0
+.venv-unet\Scripts\python -m pip install --no-build-isolation "git+https://github.com/facebookresearch/sam2.git@2b90b9f5ceec907a1c18123530e92e794ad901a4"
+mkdir models\sam2
+curl.exe -L -o models\sam2\sam2.1_hiera_large.pt https://dl.fbaipublicfiles.com/segment_anything_2/092824/sam2.1_hiera_large.pt
+# verify GPU, sm_120 kernels and OpenCV GUI before anything else:
+.venv-unet\Scripts\python -m tools.check_env
+```
+
+`requirements-lock.txt` is the exact tested environment
+(`pip install --no-deps -r requirements-lock.txt`).
+
+Large data never goes into git: clips, frames, labels, runs and checkpoints
+live under `data/`, `runs/` and `models/` (all ignored).
+
+## Real-data pipeline
+
+All commands run from the repo root with the venv's python
+(`.venv-unet\Scripts\python`, shown as `python`).
+
+### 1. Register clips (`sources.csv`)
+
+Every clip goes into exactly one split. Keep part of the test set from our
+own camera footage. `--use` is `tufts` (to label), `negative` (tuft-free
+surface: hard negatives with empty masks) or `background` (for synthetic data).
+
+```powershell
+python -m tools.sources add-local D:\footage\run3.mp4 --split test --use tufts --notes "wind tunnel run 3"
+python -m tools.sources add-local D:\footage\bare_wing.mp4 --split train --use negative
+python -m tools.sources add-url "https://www.youtube.com/watch?v=XXXX" --split train --use tufts
+python -m tools.sources check
+python -m tools.sources list
+```
+
+`add-url` reads the YouTube metadata first and refuses anything that is not
+Creative Commons unless you add `--permission "who granted it, when"`.
+Clips below 720p are refused; heavily compressed ones are refused unless `--force`.
+
+### 2. Pick diverse frames
+
+```powershell
+python -m tools.extract_frames --total 500                    # tuft clips, spread evenly across clips
+python -m tools.extract_frames --use negative --total 80      # hard-negative frames
+```
+
+Frames are chosen by farthest-point sampling over scene thumbnail, lighting
+and motion energy (a proxy for fluttering / stalled tufts), with near-duplicate
+removal and a minimum time gap. Target: 300-500 reviewed frames from 10+ clips.
+
+### 3. Auto-label with SAM 2
+
+Per-clip detector settings (polarity, tape anchoring, ROI, size limits) go in
+`configs/autolabel.yaml`.
+
+```powershell
+python -m tools.auto_label                       # all extracted frames not yet labelled
+python -m tools.auto_label --clips own_run3 --limit 20
+```
+
+Output: `data/real/proposed/` (images, labels, `json/<stem>.json` with
+root/tip/angle per tuft, `meta.json`). Negative clips become empty-mask proposals.
+
+### 4. Review
+
+```powershell
+python -m tools.review_labels --data data/real/proposed --out data/real/labeled
+```
+
+| Key / mouse | Action |
+|---|---|
+| `a` / `r` | accept / reject frame (accepted frames become training data) |
+| left click | delete the tuft under the cursor, or restore a red (SAM-rejected) candidate |
+| `b` / `e`, drag | brush add / erase; `v` back to click mode; `[` `]` brush size |
+| wheel / right-drag | zoom at cursor / pan |
+| `z`, `n` / `p`, `m`, `q` | undo, next / prev, toggle overlay, quit |
+
+Every decision and edit is logged to `data/real/review_log.jsonl` with time spent.
+
+### 5. Train
+
+```powershell
+python -m tools.train --config configs/unet_resnet34.yaml
+python -m tools.train --config configs/unet_resnet34.yaml --set train.epochs=80 loss.w_cldice=0.3
+```
+
+Real frames only by default (`data.synthetic_share: 0`). Splits come from
+`sources.csv` by clip; the test split is never loaded. Each run writes
+`runs/<name>_<time>/` with the resolved config, split manifest, CSV and
+TensorBoard logs, sample sheets (image | ground truth | prediction) and
+`checkpoints/best.pt` + `last.pt` (`--resume` continues a run).
+
+### 6. Model-in-the-loop rounds
+
+```powershell
+python -m tools.loop_round --clips yt_new1 own_run7 --weights runs/LATEST
+```
+
+Extracts frames from the new clips, runs the current U-Net on them, opens the
+review tool on exactly those frames, then retrains on all accepted frames
+(warm start; `--fresh` to retrain from ImageNet, `--no-train` to stop after review).
+
+### Detection on an image (classical or U-Net)
+
+```powershell
+python main.py --image frame.png --polarity light --tape-root --roi 600,650,1650,650
+python main.py --image frame.png --backend unet --weights runs\<run>\checkpoints\best.pt
+```
+
+Detection always runs at native resolution; set `--min/max-length-px` and
+`--min/max-area` to match how large tufts are in your footage.
+
+## Tests
+
+```powershell
+python -m pytest -q tests
+```

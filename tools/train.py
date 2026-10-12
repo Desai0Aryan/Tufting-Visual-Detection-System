@@ -33,7 +33,7 @@ from src.labeling import list_samples  # noqa: E402
 from src.losses import SegLoss  # noqa: E402
 from src.metrics import ClDiceMeter, SegMeter  # noqa: E402
 from src.seg_dataset import EpochSampler, Item, TrainCrops, ValTiles  # noqa: E402
-from src.splits import load_split_map, split_real  # noqa: E402
+from src.splits import load_split_map, read_meta, split_real  # noqa: E402
 from src.unet import build_model, save_checkpoint  # noqa: E402
 
 cv2.setNumThreads(0)  # loader workers already run in parallel
@@ -51,8 +51,10 @@ def assemble_splits(cfg):
             if not Path(root, "images").is_dir():
                 raise FileNotFoundError(f"real dataset {root} not found (images/ missing)")
             parts = split_real(root, list_samples(root), split_map)
-            train += [Item(str(root), s, "real") for s in parts["train"]]
-            val += [Item(str(root), s, "real") for s in parts["val"]]
+            meta = read_meta(root)
+            dom = lambda s: meta.get(s, {}).get("domain", "own")
+            train += [Item(str(root), s, "real", dom(s)) for s in parts["train"]]
+            val += [Item(str(root), s, "real", dom(s)) for s in parts["val"]]
             manifest["test_samples"] += len(parts["test"])
             manifest["real"][str(root)] = {"train": parts["train"], "val": parts["val"],
                                            "test_count": len(parts["test"])}
@@ -213,9 +215,17 @@ def main(argv=None):
     train_loader = DataLoader(train_ds, batch_size=d["batch_size"], sampler=sampler,
                               num_workers=workers, pin_memory=device.startswith("cuda"),
                               drop_last=True, persistent_workers=workers > 0)
-    val_ds = ValTiles(val_items, d["val_tile"], classes) if val_items else None
-    val_loader = (DataLoader(val_ds, batch_size=d["batch_size"], shuffle=False, num_workers=0)
-                  if val_ds else None)
+    # one validation set per data domain; "own" (our footage) selects checkpoints when present
+    domains = sorted({i.domain for i in val_items}, key=lambda x: (x != "own", x))
+    val_sets = {dm: ValTiles([i for i in val_items if i.domain == dm], d["val_tile"], classes) for dm in domains}
+    val_loaders = {dm: DataLoader(ds, batch_size=d["batch_size"], shuffle=False, num_workers=0)
+                   for dm, ds in val_sets.items()}
+    primary = domains[0] if domains else None
+    val_ds = val_sets.get(primary)
+    select_key = f"val_{primary}_{tcfg['select_metric'].removeprefix('val_')}" if primary else None
+    if primary and primary != "own":
+        print(f"[note] no validation frames of our own footage: checkpoints are selected on "
+              f"'{primary}' validation; its numbers are {primary.upper()} VALIDATION ONLY")
 
     run_dir = Path(cfg["run"]["out_dir"]) / f"{cfg['run']['name']}_{datetime.now():%Y%m%d_%H%M%S}"
     (run_dir / "checkpoints").mkdir(parents=True)
@@ -258,16 +268,16 @@ def main(argv=None):
     print(f"run dir {run_dir}\ndevice {device} ({torch.cuda.get_device_name(0) if device.startswith('cuda') else 'cpu'})"
           f"  encoder {model_cfg['encoder']}  params {n_params / 1e6:.1f}M  classes {classes}")
     print(f"train samples {len(train_items)} (real {sum(i.group == 'real' for i in train_items)})  "
-          f"val samples {len(val_items)} -> {len(val_ds) if val_ds else 0} tiles  "
+          f"val samples {len(val_items)} ({', '.join(f'{k}: {len(v)} tiles' for k, v in val_sets.items())})  "
           f"test samples held out (never loaded): {manifest['test_samples']}")
     sample_idx = pick_sample_tiles(val_ds, tcfg["sample_count"]) if val_ds else []
 
     log_f = open(run_dir / "log.csv", "a", newline="")
     step_f = open(run_dir / "steps.csv", "a", newline="")
     log_w, step_w = csv.writer(log_f), csv.writer(step_f)
-    cols = ["epoch", "lr", "train_loss", "bce", "dice", "cldice", "root", "val_loss", "val_dice",
-            "val_iou", "val_precision", "val_recall", "val_dice@0.5", "val_cldice@0.5",
-            "best_threshold", "seconds"]
+    metric_names = ["loss", "dice", "iou", "precision", "recall", "dice@0.5", "cldice@0.5", "best_threshold"]
+    cols = (["epoch", "lr", "train_loss", "bce", "dice", "cldice", "root"]
+            + [f"val_{dm}_{m}" for dm in domains for m in metric_names] + ["seconds"])
     if start_epoch == 1:
         log_w.writerow(cols)
         step_w.writerow(["epoch", "step", "loss"])
@@ -303,15 +313,16 @@ def main(argv=None):
         step_f.flush()
         tr = {k: v / max(n, 1) for k, v in sums.items()}
 
-        vm = validate(model, val_loader, device, cfg, loss_fn) if val_loader else {}
-        score = vm.get(tcfg["select_metric"], -tr["loss"])
+        per_dom = {dm: validate(model, ld, device, cfg, loss_fn) for dm, ld in val_loaders.items()}
+        vm = {f"val_{dm}_{k.removeprefix('val_')}": v for dm, m in per_dom.items() for k, v in m.items()}
+        score = vm.get(select_key, -tr["loss"])
         improved = score > best
         if improved:
             best, best_epoch, stale = score, epoch, 0
             save_checkpoint(model, run_dir / "checkpoints" / "best.pt", model_cfg)
             (run_dir / "checkpoints" / "best.pt.json").write_text(json.dumps({
-                "epoch": epoch, "selected_on": "val", "select_metric": tcfg["select_metric"],
-                "best_metrics": {"val": vm}, "train": tr, "config": cfg}, indent=1))
+                "epoch": epoch, "selected_on": primary, "select_metric": select_key,
+                "best_metrics": per_dom, "train": tr, "config": cfg}, indent=1))
         else:
             stale += 1
         save_checkpoint(model, run_dir / "checkpoints" / "last.pt", model_cfg, extra={
@@ -327,10 +338,12 @@ def main(argv=None):
             if isinstance(v, (int, float)) and k != "epoch":
                 tb.add_scalar(f"epoch/{k}", v, epoch)
         if val_ds and (epoch % tcfg["sample_every"] == 0 or epoch == 1 or epoch == tcfg["epochs"]):
-            write_samples(model, val_ds, sample_idx, device, cfg,
-                          run_dir / "samples" / f"epoch_{epoch:03d}.png", vm.get("best_threshold", 0.5))
-        vtxt = (f"val dice {vm['val_dice']:.3f} P {vm['val_precision']:.3f} R {vm['val_recall']:.3f} "
-                f"clDice {vm['val_cldice@0.5']:.3f} thr {vm['best_threshold']}") if vm else "no val"
+            write_samples(model, val_ds, sample_idx, device, cfg, run_dir / "samples" / f"epoch_{epoch:03d}.png",
+                          per_dom[primary]["best_threshold"])
+        vtxt = "  ".join(
+            f"[{dm}{'' if dm == 'own' else ' validation only'}] dice {m['val_dice']:.3f} P {m['val_precision']:.3f} "
+            f"R {m['val_recall']:.3f} clDice {m['val_cldice@0.5']:.3f} thr {m['best_threshold']}"
+            for dm, m in per_dom.items()) or "no val"
         print(f"epoch {epoch:3d}/{tcfg['epochs']}  loss {tr['loss']:.4f}  {vtxt}  "
               f"({row['seconds']:.0f}s){'  *best*' if improved else ''}", flush=True)
         if stale >= tcfg["early_stop_patience"]:
@@ -339,7 +352,7 @@ def main(argv=None):
 
     log_f.close(); step_f.close(); tb.close()
     (Path(cfg["run"]["out_dir"]) / "LATEST").write_text(str(run_dir))
-    print(f"\nbest epoch {best_epoch}  {tcfg['select_metric']} {best:.4f}\n"
+    print(f"\nbest epoch {best_epoch}  {select_key or 'train loss'} {best:.4f}\n"
           f"checkpoint {run_dir / 'checkpoints' / 'best.pt'}")
     return 0
 

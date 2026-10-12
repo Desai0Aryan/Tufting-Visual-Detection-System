@@ -30,7 +30,8 @@ from .labeling import load_sample
 class Item:
     root: str
     stem: str
-    group: str  # "real" or "synthetic"
+    group: str            # "real" or "synthetic"
+    domain: str = "own"   # where the frames come from: "own", "dlr", ... (meta.json "domain")
 
 
 def _to_tensors(rgb, label, classes):
@@ -70,7 +71,10 @@ class TrainCrops:
 
     def __init__(self, items, size=512, epoch_size=2000, seed=0, p_positive=0.7,
                  synthetic_share=0.3, aug=None, classes=1, augment=True):
-        from .transforms import build_train_transform
+        from .transforms import build_domain_transform, build_train_transform
+        aug = dict(aug or {})
+        self.domain_tf = {d: build_domain_transform(spec)
+                          for d, spec in (aug.pop("domain", None) or {}).items()} if augment else {}
         if not items:
             raise ValueError("no training samples")
         self.items, self.size, self.epoch_size = list(items), size, epoch_size
@@ -101,6 +105,10 @@ class TrainCrops:
         c_img, c_lab = crop_pad(rgb, lab, y, x, self.window)
         self.tf.set_random_seed(int(rng.integers(2 ** 31)))
         out = self.tf(image=c_img, mask=c_lab)
+        dtf = self.domain_tf.get(item.domain)
+        if dtf is not None:
+            dtf.set_random_seed(int(rng.integers(2 ** 31)))
+            out["image"] = dtf(image=out["image"])["image"]
         return _to_tensors(out["image"], out["mask"], self.classes)
 
 

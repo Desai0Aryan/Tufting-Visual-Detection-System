@@ -89,6 +89,18 @@ class GlareBlobs(A.ImageOnlyTransform):
         return np.clip(img.astype(np.float32) + add[..., None], 0, 255).astype(np.uint8)
 
 
+def build_domain_transform(spec):
+    """Extra colour augmentation for one data domain (e.g. DLR's red/dark tufts,
+    while ours are white): hue shift, grayscale and colour inversion, so the
+    model has to learn tuft shape rather than tuft colour."""
+    return A.Compose([
+        A.HueSaturationValue(hue_shift_limit=180, sat_shift_limit=40, val_shift_limit=0,
+                             p=spec.get("hue_p", 0.5)),
+        A.ToGray(p=spec.get("gray_p", 0.3)),
+        A.InvertImg(p=spec.get("invert_p", 0.3)),
+    ], seed=0)
+
+
 def build_train_transform(size, aug=None):
     """Returns (transform, window): crop a `window`-px square, then call
     transform(image=rgb, mask=label) -> size x size outputs."""

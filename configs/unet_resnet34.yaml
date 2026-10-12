@@ -38,6 +38,8 @@ aug:                                   # see src/transforms.py DEFAULT_AUG for e
   glare_p: 0.3
   blur_p: 0.3
   compression_p: 0.5
+  domain:                  # extra colour augmentation per data domain (meta.json "domain")
+    dlr: {hue_p: 0.5, gray_p: 0.3, invert_p: 0.3}   # DLR tufts are red/dark, ours are white
 
 loss:
   pos_weight: 2.0
@@ -60,7 +62,8 @@ train:
   amp: bf16                # bf16 | fp16 | off
   channels_last: true
   early_stop_patience: 12  # epochs without val improvement
-  select_metric: val_dice  # checkpoint selection metric (at the best threshold)
+  select_metric: val_dice  # selection metric (best threshold) on our own val set,
+                           # or on the first other domain when we have none yet
   thresholds: [0.3, 0.4, 0.5, 0.6, 0.7]
   threshold_beta: 1.0      # F-beta used to pick the inference threshold on val
   sample_every: 5          # write image | GT | prediction sheets every N epochs

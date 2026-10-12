@@ -8,6 +8,9 @@ Rules enforced here:
 - `use` is one of: tufts (auto-label + review), background (synthetic
   backgrounds), negative (tuft-free surface -> empty-mask hard negatives);
 - part of the test set must be our own footage (checked by `check`).
+
+Rows with origin `dataset:<name>` are image datasets (e.g. dataset:dlr): one row
+per recording session, no video file in data/clips.
 """
 import csv
 import re
@@ -89,6 +92,10 @@ def quality_problems(stats, force=False):
     return problems
 
 
+def is_dataset(row):
+    return str(row.get("origin", "")).startswith("dataset:")
+
+
 def make_row(clip_id, split, use, origin, url="", title="", uploader="", license_text="",
              resolution="", notes=""):
     if split not in SPLITS:
@@ -127,7 +134,7 @@ def check(path, clips_dir):
         summary[r["split"]][r["use"]] += 1
         if r["origin"] != "own" and not (is_creative_commons(r["license"]) or "permission" in r["license"].lower()):
             errors.append(f"{cid}: external clip without a Creative Commons license or permission note")
-        if not list(Path(clips_dir).glob(f"{cid}.*")):
+        if not is_dataset(r) and not list(Path(clips_dir).glob(f"{cid}.*")):
             errors.append(f"{cid}: no video file in {clips_dir}")
     if rows and not any(r["origin"] == "own" and r["split"] == "test" for r in rows):
         errors.append("test split has no clip of our own footage (origin=own)")

@@ -75,14 +75,24 @@ class SegLoss:
         self.w_cldice, self.cldice_iters, self.root_scale = w_cldice, cldice_iters, root_scale
 
     def __call__(self, logits, target, root_valid=None):
-        """Returns (total, parts dict of detached floats)."""
+        """Returns (total, parts dict of detached floats).
+
+        root_valid: (N, 1 or 2, H, W). Channel 0 = where the root label counts;
+        optional channel 1 = tuft loss weight (0 inside ignore regions)."""
         t_logit, t_tgt = logits[:, 0:1], target[:, 0:1]
-        parts = {"bce": bce_loss(t_logit, t_tgt, self.pos_weight),
-                 "dice": dice_loss(t_logit, t_tgt)}
+        w = root_valid[:, 1:2] if root_valid is not None and root_valid.shape[1] > 1 else None
+        if w is not None and bool((w > 0).all()):
+            w = None  # nothing ignored: use the plain losses
+        parts = {"bce": bce_loss(t_logit, t_tgt, self.pos_weight, w),
+                 "dice": dice_loss(t_logit, t_tgt, w)}
         total = self.w_bce * parts["bce"] + self.w_dice * parts["dice"]
         if self.w_cldice > 0:
-            parts["cldice"] = soft_cldice_loss(t_logit.float(), t_tgt, self.cldice_iters)
+            cl_logit, cl_tgt = t_logit.float(), t_tgt
+            if w is not None:  # ignored pixels count as background for both
+                cl_logit, cl_tgt = cl_logit.masked_fill(w < 0.5, -20.0), cl_tgt * w
+            parts["cldice"] = soft_cldice_loss(cl_logit, cl_tgt, self.cldice_iters)
             total = total + self.w_cldice * parts["cldice"]
+        root_valid = root_valid[:, 0:1] if root_valid is not None else None
         if logits.shape[1] > 1 and root_valid is not None and root_valid.sum() > 0:
             r_logit, r_tgt = logits[:, 1:2], target[:, 1:2]
             parts["root"] = (bce_loss(r_logit, r_tgt, 1.0, root_valid)

@@ -3,7 +3,8 @@
     python -m tools.review_labels --data data/real/proposed --out data/real/labeled
 
 Window shows the frame with the mask (green), each tuft's root (red dot) and
-tip-tangent arrow (cyan), and SAM-rejected candidates (thin red outline).
+tip-tangent arrow (cyan), SAM-rejected candidates (thin red outline) and
+ignore regions (blue tint: no training loss there).
 
   a  accept frame -> copied to --out (training data), next
   r  reject frame -> never used, next
@@ -28,12 +29,12 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from src.anchor import tape_distance  # noqa: E402
-from src.label_io import load_frame, save_frame  # noqa: E402
+from src.label_io import load_frame, load_ignore, save_frame  # noqa: E402
 from src.labeling import list_samples  # noqa: E402
 from src.review_core import ReviewState  # noqa: E402
 
 WIN = "tuft review"
-GREEN, RED, CYAN, YELLOW = (60, 220, 60), (0, 0, 255), (255, 255, 0), (0, 255, 255)
+GREEN, RED, CYAN, YELLOW, BLUE = (60, 220, 60), (0, 0, 255), (255, 255, 0), (0, 255, 255), (255, 120, 0)
 
 
 def tape_root_clips(config="configs/autolabel.yaml"):
@@ -64,6 +65,7 @@ class ReviewApp:
         clip = meta.get("clip_id")
         anchor = tape_distance(img) if (clip in self.tape_clips or self.tape_default) else None
         self.state = ReviewState(img, mask, info, meta, anchor)
+        self.ignore = load_ignore(self.data, self.stems[k])
         h, w = img.shape[:2]
         self.base = min(self.max_w / w, self.max_h / h, 1.0)
         self.zoom, self.cx, self.cy = 1.0, w / 2, h / 2
@@ -78,7 +80,7 @@ class ReviewApp:
             out_meta = dict(meta, reviewed=True, status="accepted", edited=rec["edited"],
                             review_seconds=rec["seconds"], proposed_by=meta.get("source"))
             save_frame(self.out, stem, s.image, s.mask, s.tufts, out_meta,
-                       extra=[{"source": "reviewed"} for _ in s.tufts])
+                       extra=[{"source": "reviewed"} for _ in s.tufts], ignore=self.ignore)
         meta_all[stem] = dict(meta, status="accepted" if decision == "accept" else "rejected")
         (self.data / "meta.json").write_text(json.dumps(meta_all, indent=1))
         with open(self.log_path, "a") as fh:
@@ -110,6 +112,9 @@ class ReviewApp:
     def render(self):
         s = self.state
         img = s.image.copy()
+        if self.show and self.ignore is not None:  # ignore regions: blue tint, no loss there
+            ig = self.ignore > 0
+            img[ig] = (0.6 * img[ig] + 0.4 * np.array(BLUE)).astype(np.uint8)
         if self.show:
             m = s.mask > 0
             img[m] = (0.45 * img[m] + 0.55 * np.array(GREEN)).astype(np.uint8)

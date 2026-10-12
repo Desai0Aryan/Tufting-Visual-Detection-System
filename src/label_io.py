@@ -4,6 +4,7 @@ A labelled frame lives in a dataset folder (same layout the trainer reads):
     images/<stem>.png       the frame, native resolution
     labels/<stem>.png       channels: tuft mask, root disks, root-valid
     json/<stem>.json        per-tuft geometry + provenance (this module)
+    ignore/<stem>.png       optional: 255 = no tuft loss here (unlabelled tufts)
     meta.json               {stem: {clip_id, frame_idx, split, use, source, status, ...}}
 
 The tuft channel is stored pixel-exactly (never re-rasterised from filtered
@@ -12,6 +13,7 @@ contours, which silently dropped tufts in the old review tool).
 import json
 from pathlib import Path
 
+import cv2
 import numpy as np
 
 from .labeling import encode_label, load_sample, render_label, save_sample
@@ -47,14 +49,23 @@ def tuft_records(tufts, extra=None):
     return out
 
 
-def save_frame(root, stem, image, mask, tufts, meta, rejected=None, extra=None):
-    """Write image, label, per-frame JSON and meta entry."""
+def save_frame(root, stem, image, mask, tufts, meta, rejected=None, extra=None, ignore=None):
+    """Write image, label, per-frame JSON, meta entry and optional ignore mask."""
     root = Path(root)
     save_sample(root, stem, image, build_label(mask, tufts), meta=meta)
+    if ignore is not None and np.any(ignore):
+        (root / "ignore").mkdir(exist_ok=True)
+        cv2.imwrite(str(root / "ignore" / f"{stem}.png"), (np.asarray(ignore) > 0).astype(np.uint8) * 255)
     (root / "json").mkdir(exist_ok=True)
     payload = {"stem": stem, **{k: meta.get(k) for k in ("clip_id", "frame_idx", "split", "use", "source")},
                "tufts": tuft_records(tufts, extra), "rejected_candidates": rejected or []}
     (root / "json" / f"{stem}.json").write_text(json.dumps(payload, indent=1))
+
+
+def load_ignore(root, stem):
+    """uint8 0/255 ignore mask, or None when the frame has none."""
+    p = Path(root) / "ignore" / f"{stem}.png"
+    return cv2.imread(str(p), cv2.IMREAD_GRAYSCALE) if p.exists() else None
 
 
 def load_frame(root, stem):

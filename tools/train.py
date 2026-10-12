@@ -141,10 +141,12 @@ def validate(model, loader, device, cfg, loss_fn):
         loss_sum += float(loss_fn(logits, tgt, valid)[0]) * img.shape[0]
         n += img.shape[0]
         prob, gt = torch.sigmoid(logits[:, 0]), tgt[:, 0] > 0.5
+        keep = valid[:, 1] > 0.5 if valid.shape[1] > 1 else torch.ones_like(gt)  # ignore regions
+        g = gt & keep
         for t in ths:
-            pr = prob >= t
-            counts[t] += torch.stack([(pr & gt).sum(), (pr & ~gt).sum(), (~pr & gt).sum()]).double()
-        cl.update((prob >= 0.5).cpu().numpy(), gt.cpu().numpy())
+            pr = (prob >= t) & keep
+            counts[t] += torch.stack([(pr & g).sum(), (pr & ~g).sum(), (~pr & g).sum()]).double()
+        cl.update(((prob >= 0.5) & keep).cpu().numpy(), g.cpu().numpy())
     meters = {}
     for t, c in counts.items():
         m = SegMeter()

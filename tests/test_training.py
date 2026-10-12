@@ -230,5 +230,25 @@ class SourceShareTests(unittest.TestCase):
             self.assertEqual([i.stem for i in val], ["v__f0"])
 
 
+
+class PaddingIgnoreTests(unittest.TestCase):
+    def test_padded_pixels_get_zero_weight_even_after_full_rotation(self):
+        from src.label_io import save_frame
+        from src.seg_dataset import Item, TrainCrops, crop_pad
+        lab = np.zeros((40, 50, 4), np.uint8)
+        _, cl = crop_pad(np.zeros((40, 50, 3), np.uint8), lab, 0, 0, 64)
+        self.assertTrue((cl[40:, :, 3] == 255).all() and (cl[:, 50:, 3] == 255).all())
+        self.assertTrue((cl[:40, :50, 3] == 0).all())
+        with tempfile.TemporaryDirectory() as d:  # frame smaller than the rotation window
+            img = np.full((80, 80, 3), 128, np.uint8); m = np.zeros((80, 80), np.uint8)
+            save_frame(f"{d}/r", "a__f0", img, m, [], {"clip_id": "a"})
+            ds = TrainCrops([Item(f"{d}/r", "a__f0", "real")], size=64, epoch_size=8,
+                            aug={"rotate_deg": 180, "affine_p": 1.0})
+            self.assertGreater(ds.window, 80)
+            zero = [float((ds[i][2][1] == 0).float().mean()) for i in range(8)]
+            self.assertTrue(all(z > 0 for z in zero))      # some mirrored pixels in every crop
+            self.assertTrue(all(z < 1 for z in zero))      # but real pixels still count
+
+
 if __name__ == "__main__":
     unittest.main()

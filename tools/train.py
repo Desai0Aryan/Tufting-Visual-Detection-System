@@ -190,6 +190,7 @@ def main(argv=None):
     ap.add_argument("--config", required=True)
     ap.add_argument("--set", nargs="*", default=[], metavar="KEY=VALUE")
     ap.add_argument("--resume", default=None, help="checkpoints/last.pt to continue from")
+    ap.add_argument("--init", default=None, help="start from these weights (e.g. last round's best.pt)")
     ap.add_argument("--device", default=None, help="default: cuda (required unless set)")
     a = ap.parse_args(argv)
 
@@ -218,6 +219,7 @@ def main(argv=None):
     (run_dir / "checkpoints").mkdir(parents=True)
     (run_dir / "samples").mkdir()
     dump_config(cfg, run_dir / "config.yaml")
+    manifest["init"] = a.init
     (run_dir / "split.json").write_text(json.dumps(manifest, indent=1))
     from torch.utils.tensorboard import SummaryWriter
     tb = SummaryWriter(str(run_dir / "tb"))
@@ -225,6 +227,9 @@ def main(argv=None):
     model_cfg = {"arch": cfg["model"]["arch"], "encoder": cfg["model"]["encoder"],
                  "encoder_weights": cfg["model"]["encoder_weights"], "classes": classes}
     model = build_model(model_cfg).to(device)
+    if a.init:
+        model.load_state_dict(torch.load(a.init, map_location="cpu", weights_only=True)["state_dict"])
+        print(f"initialised from {a.init}")
     if tcfg["channels_last"]:
         model = model.to(memory_format=torch.channels_last)
     o = cfg["optim"]
@@ -331,6 +336,7 @@ def main(argv=None):
             break
 
     log_f.close(); step_f.close(); tb.close()
+    (Path(cfg["run"]["out_dir"]) / "LATEST").write_text(str(run_dir))
     print(f"\nbest epoch {best_epoch}  {tcfg['select_metric']} {best:.4f}\n"
           f"checkpoint {run_dir / 'checkpoints' / 'best.pt'}")
     return 0

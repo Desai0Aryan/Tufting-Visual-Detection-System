@@ -95,7 +95,7 @@ class TrainLoopTests(unittest.TestCase):
                     "loss.w_cldice=0.3"]
             rc = train.main(["--config", "configs/unet_resnet34.yaml", "--device", "cpu", "--set", *sets])
             self.assertEqual(rc, 0)
-            run = next(Path(d, "runs").iterdir())
+            run = Path(Path(d, "runs", "LATEST").read_text())
             for f in ("config.yaml", "split.json", "log.csv", "steps.csv",
                       "checkpoints/best.pt", "checkpoints/best.pt.json", "checkpoints/last.pt",
                       "samples/epoch_001.png", "samples/epoch_002.png"):

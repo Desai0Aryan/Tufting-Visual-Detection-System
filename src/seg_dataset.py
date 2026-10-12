@@ -10,7 +10,12 @@ epoch a fresh index range, which also works with persistent loader workers
 Val: fixed non-overlapping full-resolution tiles of real frames, no augmentation.
 
 Samples use the existing on-disk format (images/<stem>.png, labels/<stem>.png
-with channels tuft/root/root-valid, meta.json).
+with channels tuft/root/root-valid, meta.json) plus an optional
+ignore/<stem>.png: pixels there get zero tuft loss and are left out of
+validation metrics (e.g. tufts a dataset never labelled).
+
+Each sample yields (image, target, valid) where valid[0] is root-valid and
+valid[1] is the tuft loss weight (0 inside ignore regions).
 """
 from dataclasses import dataclass
 
@@ -33,7 +38,8 @@ def _to_tensors(rgb, label, classes):
     img = torch.from_numpy(np.ascontiguousarray(rgb.transpose(2, 0, 1))).float() / 255.0
     lab = label > 127
     tgt = torch.from_numpy(np.ascontiguousarray(lab[..., :classes].transpose(2, 0, 1))).float()
-    valid = torch.from_numpy(np.ascontiguousarray(lab[..., 2:3].transpose(2, 0, 1))).float()
+    weight = ~lab[..., 3] if lab.shape[-1] > 3 else np.ones(lab.shape[:2], bool)
+    valid = torch.from_numpy(np.ascontiguousarray(np.stack([lab[..., 2], weight]))).float()
     return img, tgt, valid
 
 
@@ -51,8 +57,12 @@ def crop_pad(img, label, y, x, size):
 
 
 def _load_rgb(item):
+    """RGB image and a 4-channel label: tuft, root, root-valid, ignore."""
+    from .label_io import load_ignore
     img, lab = load_sample(item.root, item.stem)
-    return cv2.cvtColor(img, cv2.COLOR_BGR2RGB), lab
+    ign = load_ignore(item.root, item.stem)
+    ign = np.zeros(lab.shape[:2], np.uint8) if ign is None else ign
+    return cv2.cvtColor(img, cv2.COLOR_BGR2RGB), np.dstack([lab, ign])
 
 
 class TrainCrops:

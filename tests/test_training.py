@@ -145,3 +145,17 @@ class TrainLoopTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class IgnoreDatasetTests(unittest.TestCase):
+    def test_ignore_png_becomes_zero_weight(self):
+        from src.label_io import save_frame
+        from src.seg_dataset import Item, ValTiles
+        with tempfile.TemporaryDirectory() as d:
+            img = np.zeros((64, 64, 3), np.uint8); m = np.zeros((64, 64), np.uint8)
+            ign = np.zeros((64, 64), np.uint8); ign[:16, :16] = 255
+            save_frame(f"{d}/r", "c__f0", img, m, [], {"clip_id": "c"}, ignore=ign)
+            _, _, valid = ValTiles([Item(f"{d}/r", "c__f0", "real")], size=64)[0]
+            self.assertEqual(tuple(valid.shape), (2, 64, 64))
+            self.assertEqual(float(valid[1, :16, :16].sum()), 0.0)
+            self.assertEqual(float(valid[1, 16:, 16:].min()), 1.0)

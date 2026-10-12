@@ -81,3 +81,18 @@ class SoftLossTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+@unittest.skipUnless(HAS_TORCH, "torch not installed")
+class IgnoreRegionTests(unittest.TestCase):
+    def test_predictions_inside_ignore_do_not_change_the_loss(self):
+        import torch
+        from src.losses import SegLoss
+        tgt = torch.zeros(1, 1, 32, 32); tgt[..., 10:12, 4:28] = 1
+        valid = torch.ones(1, 2, 32, 32); valid[:, 1, 20:30, 20:30] = 0      # ignore box
+        base = torch.where(tgt > 0, 6.0, -6.0)
+        other = base.clone(); other[..., 20:30, 20:30] = 6.0                  # "tuft" predicted in ignore box
+        for w_cl in (0.0, 0.5):
+            f = SegLoss(w_cldice=w_cl)
+            self.assertAlmostEqual(float(f(base, tgt, valid)[0]), float(f(other, tgt, valid)[0]), places=4)
+            self.assertGreater(float(f(other, tgt)[0]), float(f(base, tgt)[0]) + 0.01)  # without ignore it counts

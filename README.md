@@ -131,6 +131,34 @@ Extracts frames from the new clips, runs the current U-Net on them, opens the
 review tool on exactly those frames, then retrains on all accepted frames
 (warm start; `--fresh` to retrain from ImageNet, `--no-train` to stop after review).
 
+### External data: DLR in-flight tufts (Zenodo 10539950)
+
+Lee, Olsman & Triebel, "Learning Fluid Flow Visualizations From In-Flight Images
+With Tufts", IEEE RA-L 2023, doi 10.1109/LRA.2023.3270746. Zenodo lists CC BY 4.0
+and also MIT in its Rights section; cite the paper either way.
+
+```powershell
+# unzip tufts.zip into data/external/dlr_tufts/ first, then:
+python -m tools.view_dlr                                  # annotation contact sheet
+python -m tools.import_dlr polygons                       # 50 HABLEG polygon frames -> data/dlr/hableg_polygons
+python -m tools.import_dlr boxes                          # SAM 2 masks from HABLEG boxes -> data/dlr/hableg_sam2/proposed
+python -m tools.import_dlr tracks                         # tracker ground truth -> data/dlr/hableg_tracks
+python -m tools.import_dlr sheet --data data/dlr/hableg_sam2/proposed --stems-file data/dlr/hableg_sam2/proposed/review_batch1.txt --out data/dlr/preview_sam2.jpg --open
+python -m tools.review_labels --data data/dlr/hableg_sam2/proposed --out data/dlr/hableg_sam2/labeled --stems-file data/dlr/hableg_sam2/proposed/review_batch1.txt
+```
+
+HABLEG sessions GOPR, GP02, GP03 are train; GP04 is external validation (human
+polygons only). EC135 is not used (its duct-ring tufts appear unlabelled).
+DLR frames get extra colour augmentation (hue, grayscale, inversion) because
+their tufts are red/dark and ours are white. Validation is reported per domain:
+`val_dlr_*` numbers are DLR validation only, never our accuracy.
+
+Pipeline test on DLR data only (after the review batch is accepted):
+
+```powershell
+python -m tools.train --config configs/unet_resnet34.yaml --set "data.real=[data/dlr/hableg_polygons,data/dlr/hableg_sam2/labeled]" run.name=dlr_pipeline_test
+```
+
 ### Detection on an image (classical or U-Net)
 
 ```powershell

@@ -16,10 +16,11 @@ model:
                            # shows a lower root/tip flip rate without hurting detection
 
 data:
-  sources_csv: data/sources.csv       # clip_id -> train/val/test (one clip, one split)
-  real: [data/real/labeled]           # reviewed real frames; split by clip via sources.csv
-  synthetic: [data/synthetic/train]   # train only; val/test are always real
-  synthetic_share: 0.3                # fraction of training crops drawn from synthetic data
+  sources_csv: sources.csv            # clip_id -> train/val/test (one clip, one split)
+  real: [data/real/labeled]           # reviewed real frames (incl. empty-mask hard negatives)
+  synthetic: []                       # OFF by default; e.g. [data/synthetic/train], train only
+  synthetic_share: 0.0                # fraction of training crops from synthetic data; keep 0
+                                      # unless evaluate.py's ablation shows it helps on real test
   allow_synthetic_val: false          # smoke tests only: validate on synthetic when no real data
   synthetic_val_fraction: 0.2         # used only with allow_synthetic_val
   crop: 512                           # native-resolution crops; never downscaled

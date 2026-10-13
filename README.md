@@ -147,8 +147,26 @@ python -m tools.import_dlr sheet --data data/dlr/hableg_sam2/proposed --stems-fi
 python -m tools.review_labels --data data/dlr/hableg_sam2/proposed --out data/dlr/hableg_sam2/labeled --stems-file data/dlr/hableg_sam2/proposed/review_batch1.txt
 ```
 
-HABLEG sessions GOPR, GP02, GP03 are train; GP04 is external validation (human
-polygons only). EC135 is not used (its duct-ring tufts appear unlabelled).
+HABLEG sessions GOPR, GP02, GP04 are train; GP03 is external validation (human
+polygons only).
+
+EC135 (helicopter tail): tufts on the inner duct ring are often unboxed, so the
+ring band 0.8-1.0 x the fitted duct ellipse gets zero loss (boxed / outlined
+tufts in it stay labelled). Frames without a trustworthy duct fit are dropped
+(`src/duct_fit.py`: 392 of 982 frames pass). Split by DSC number: val blocks
+2741-2789, 3061-3109, 3361-3409, 20-number gaps dropped.
+
+```powershell
+python -m tools.import_ec135 fit          # duct fit + sanity check per frame -> data/dlr/ec135_fits.json
+python -m tools.import_ec135 sheet        # contact sheets of accepted fits with the band
+python -m tools.import_ec135 polygons     # human outlines (fit must pass) -> data/dlr/ec135_polygons
+python -m tools.import_ec135 boxes        # SAM 2 from boxes -> data/dlr/ec135_sam2/proposed
+python -m tools.import_dlr clean --data data/dlr/ec135_sam2/proposed
+python -m tools.import_ec135 detag        # tape tags SAM included -> ignore
+python -m tools.import_dlr promote --src data/dlr/ec135_sam2/proposed --out data/dlr/ec135_sam2/labeled
+python -m tools.eval_dlr --weights A=runs/<run>/checkpoints/best.pt   # GP03 + EC135 val, DLR validation only
+```
+
 DLR frames get extra colour augmentation (hue, grayscale, inversion) because
 their tufts are red/dark and ours are white. Validation is reported per domain:
 `val_dlr_*` numbers are DLR validation only, never our accuracy.

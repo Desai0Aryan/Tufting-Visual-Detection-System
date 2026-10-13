@@ -45,6 +45,7 @@ aug:                                   # see src/transforms.py DEFAULT_AUG for e
   compression_p: 0.5
   domain:                  # extra colour augmentation per data domain (meta.json "domain")
     dlr: {hue_p: 0.5, gray_p: 0.3, invert_p: 0.3}   # DLR tufts are red/dark, ours are white
+    dlr_ec135: {hue_p: 0.5, gray_p: 0.3, invert_p: 0.3}  # same for the EC135 helicopter tail
 
 loss:
   pos_weight: 2.0

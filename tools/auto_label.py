@@ -44,7 +44,12 @@ def candidates(image, s):
               min_length_px=s["min_length_px"], max_length_px=s["max_length_px"],
               block_size=s["block_size"], c=s["c"], roi=tuple(s["roi"]) if s.get("roi") else None,
               tape_root=s.get("tape_root", False), vector_mode="tip")
-    pols = ("dark", "light") if s["polarity"] == "auto" else (s["polarity"],)
+    if s["polarity"] == "color":
+        from src.backends import ColorBackend
+        backend = ColorBackend(s.get("color_hue", ((0, 15), (170, 180))), s.get("color_s_min", 80),
+                               s.get("color_v_min", 110))
+        return TuftDetector(backend=backend, **kw).detect(image)
+    pols =("dark", "light") if s["polarity"] == "auto" else (s["polarity"],)
     runs = [TuftDetector(polarity=p, **kw).detect(image) for p in pols]
     if len(runs) == 1:
         return runs[0]
@@ -80,6 +85,21 @@ def label_frame(image, s, predictor, cfg):
     stats = {"candidates": len(cands), "accepted": res.status.count("accepted"),
              "rejected": len(rejected), "tufts": len(tufts)}
     return res.mask, tufts, rejected, stats
+
+
+def color_ignore(image, mask, s):
+    """Tuft-coloured pixels outside the proposal mask -> ignore (per-clip `ignore_color`),
+    so tufts too small or faint to become candidates are never taught as background."""
+    ic = s.get("ignore_color")
+    if not ic:
+        return None
+    from src.backends import ColorBackend
+    m = ColorBackend(ic.get("hue", ((0, 18), (165, 180))), ic.get("s_min", 45), ic.get("v_min", 60),
+                     close_px=1).predict(image).tuft
+    r = int(ic.get("dilate", 3))
+    if r > 0:
+        m = cv2.dilate(m, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2 * r + 1, 2 * r + 1)))
+    return (m > 0) & ~(mask > 0)
 
 
 def propagate(video, start_idx, n, every, masks_by_obj, predictor_video, tmp):
@@ -119,6 +139,7 @@ def main(argv=None):
     ap.add_argument("--labeled", default="data/real/labeled", help="frames already reviewed are skipped")
     ap.add_argument("--clips", nargs="*", default=None)
     ap.add_argument("--limit", type=int, default=None)
+    ap.add_argument("--stems-file", default=None, help="label only the frames listed (one stem per line)")
     ap.add_argument("--device", default="cuda")
     a = ap.parse_args(argv)
     cfg = load_config(a.config)
@@ -129,6 +150,9 @@ def main(argv=None):
     have = set(list_samples(a.out)) | set(list_samples(a.labeled))
     stem_of = lambda r: Path(r["file"]).stem
     rows = [r for r in rows if stem_of(r) not in have]
+    if a.stems_file:
+        want = set(Path(a.stems_file).read_text().split())
+        rows = [r for r in rows if stem_of(r) in want]
     if a.limit:
         rows = rows[:a.limit]
     if not rows:
@@ -161,7 +185,8 @@ def main(argv=None):
         with torch.autocast("cuda", dtype=torch.bfloat16, enabled=a.device.startswith("cuda")):
             mask, tufts, rejected, st = label_frame(image, s, predictor, cfg)
         extra = [{"source": "sam2"} for _ in tufts]
-        save_frame(a.out, stem, image, mask, tufts, dict(meta, source="sam2", **st), rejected, extra)
+        save_frame(a.out, stem, image, mask, tufts, dict(meta, source="sam2", **st), rejected, extra,
+                   ignore=color_ignore(image, mask, s))
         for k in ("candidates", "accepted", "tufts"):
             totals[k] += st[k]
         totals["frames"] += 1

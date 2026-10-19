@@ -108,6 +108,24 @@ python -m tools.review_labels --data data/real/proposed --out data/real/labeled
 
 Every decision and edit is logged to `data/real/review_log.jsonl` with time spent.
 
+#### Faster: one tuft at a time
+
+Frames with hundreds of tufts are quicker to judge one candidate at a time:
+
+```powershell
+python -m tools.vote_tufts                  # cards from train + val clips, shuffled; y / n / u, s skip, z undo, q quit
+python -m tools.build_from_votes            # -> data/real/voted (+ data/real/voted_sheet.jpg)
+python -m tools.train --config configs/unet_resnet34.yaml --set "data.real=[data/real/voted]"
+```
+
+Faster still, a grid of look-alike cards at a time (`python -m tools.vote_groups`):
+click the odd ones to give them their own vote, then `y` / `n` / `u` votes the rest.
+Same `votes.jsonl`, so both tools mix.
+
+`y` = tuft, `n` = background (hard negative), `u` / unvoted = ignore (no loss), so an
+unjudged tuft is never taught as background. Votes go to `data/real/votes.jsonl`;
+restarting continues where you stopped.
+
 ### 5. Train
 
 ```powershell

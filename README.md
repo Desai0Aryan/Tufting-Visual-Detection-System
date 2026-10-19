@@ -15,7 +15,7 @@ SAM 2 is used **only** to build training labels, never for detection.
 | Review of the original U-Net work | `REVIEW.md` |
 | Model, loss, augmentation, trainer (YAML) | done, tested; not yet trained on real data |
 | Real-data pipeline: sources, frame selection, SAM 2 auto-label, review tool, model-in-the-loop | done, tested; waiting for footage |
-| Synthetic generator (`synth_tufts.py`) | not started (off by default; ablation will decide if it is used) |
+| Synthetic generator (`src/synth_tufts.py`, `tools.make_synth_tufts`) | first version: tufted panel in perspective; training only, off by default; an ablation run decides if it is used |
 | `evaluate.py`, video input, tracker | not started |
 
 No accuracy numbers exist yet. Every result will come from `evaluate.py`.

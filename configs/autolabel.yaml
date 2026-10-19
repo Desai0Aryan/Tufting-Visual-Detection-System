@@ -54,5 +54,3 @@ clips:
   yt_FcL8hJFZftU:         # short yellow/blue tufts along the leading edge, strong sun
     polarity: auto
     min_length_px: 15
-  yt_AzF39CgTzH4:         # white/orange tufts on olive paint; two camera views
-    polarity: auto

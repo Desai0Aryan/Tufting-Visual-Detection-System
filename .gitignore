@@ -30,3 +30,4 @@ Images/
 *.mov
 *.mkv
 results/
+checkpoints/

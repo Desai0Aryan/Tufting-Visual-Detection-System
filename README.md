@@ -205,6 +205,57 @@ python main.py --image frame.png --backend unet --weights runs\<run>\checkpoints
 Detection always runs at native resolution; set `--min/max-length-px` and
 `--min/max-area` to match how large tufts are in your footage.
 
+## Process a video (MP4 in, annotated MP4 out)
+
+```powershell
+python -m tools.process_video flight.mp4                       # model: models/tuft_unet.pt
+python -m tools.process_video flight.mp4 --weights runs\<run>\checkpoints\best.pt --out results\flight
+python -m tools.process_video flight.mp4 --edit-map            # fix the tuft map again
+```
+
+For a camera fixed to the tested surface (wing camera, wind-tunnel model). The first
+run builds a **tuft map**: the model scans 60 frames across the video and keeps the
+ends that recur in place; the flow direction comes from which end wanders (the tip)
+and which stays put (the taped root), since a single frame cannot tell them apart.
+One frame opens with the proposed roots and a big flow arrow:
+
+| Key / mouse | Action |
+|---|---|
+| left click | on a root: remove it; elsewhere: add a root (faint far tufts the scan missed) |
+| `f` | flip the flow direction if the arrow points the wrong way |
+| wheel / right-drag, `z` | zoom / pan, undo |
+| Enter | accept and process |
+
+The map is saved as `<video>.tuftmap.json` and reused. Every frame is then aligned
+to the map frame (ORB + RANSAC, for shake), the model runs once, and each detection
+is assigned to its root: one ID per tuft for the whole video, arrows always from the
+root, nothing reported away from the tufts. Output: `results/<video>/<video>_annotated.mp4`
+and a per-frame CSV (angle, length, stall state per tuft).
+
+### Hand-corrected labels from a video
+
+```powershell
+python -m tools.draw_tufts flight.mp4 --frames 8 --between 75 95 120 139   # seconds where the flow changes
+python -m tools.drawn_to_labels data\drawn\flight --clip flight1 --val-from 2915
+python -m tools.eval_drawn data\drawn_labels\flight1 --split val --strokes data\drawn\flight --weights old=models\tuft_unet.pt new=runs\<run>\checkpoints\best.pt
+```
+
+Each frame opens with the detected tufts as lines (root dot on the tape). Right-click
+deletes a wrong one, a click on a missed tuft (next to its tape) lets SAM 2 outline it,
+a drag draws one by hand (root to tip), `f` flips a line, Enter accepts the frame as is.
+Only frames you edited or accepted count. Frames are picked where the flow is doing
+something (from the process_video CSV); calm cruise all looks the same.
+Lines become thick labels (about 10% of the tuft length, 4 px ignore border) with a root
+disk at the start, so a root output can be trained (`model.root_head=true`).
+
+Training options for these labels (YAML `aug:` or `--set`):
+
+| Key | What it does |
+|---|---|
+| `aug.recolor: {tuft_p, background_p, white_p, gray_bg_p}` | new yarn colour (shading kept) and / or new paint colour, independently; bias toward white yarn on grey paint |
+| `aug.shuffle: {p, drop_frac, paste_max}` | erase some tufts (surface inpainted) and paste copies elsewhere at random angles, so tuft rows and spacing stop being a cue |
+| `aug.domain.own: {hue_p, gray_p, invert_p}` | colour inversion / grayscale for our footage (dark-on-white becomes white-on-dark) |
+
 ## TuftView desktop app
 
 ```powershell

@@ -83,6 +83,8 @@ class TrainCrops:
         aug = dict(aug or {})
         self.domain_tf = {d: build_domain_transform(spec)
                           for d, spec in (aug.pop("domain", None) or {}).items()} if augment else {}
+        self.recolor = (aug.pop("recolor", None) or {}) if augment else {}   # yarn / surface colour, label-aware
+        self.shuffle = (aug.pop("shuffle", None) or {}) if augment else {}   # erase / paste tufts: no grid cue
         if not items:
             raise ValueError("no training samples")
         self.items, self.size, self.epoch_size = list(items), size, epoch_size
@@ -125,8 +127,19 @@ class TrainCrops:
         rgb, lab = _load_rgb(item)
         y, x = sample_crop_origin(lab, self.window, rng, self.p_positive)
         c_img, c_lab = crop_pad(rgb, lab, y, x, self.window)
+        if self.shuffle and rng.random() < self.shuffle.get("p", 0.5):
+            from .transforms import shuffle_tufts
+            c_img, c_lab = shuffle_tufts(c_img, c_lab, rng, self.shuffle.get("drop_frac", 0.25),
+                                         self.shuffle.get("paste_max", 6))
         self.tf.set_random_seed(int(rng.integers(2 ** 31)))
         out = self.tf(image=c_img, mask=c_lab)
+        if self.recolor:
+            from .transforms import recolor_tuft_background
+            out["image"] = recolor_tuft_background(out["image"], out["mask"][..., 0] > 127, rng,
+                                                   self.recolor.get("tuft_p", 0.5),
+                                                   self.recolor.get("background_p", 0.5),
+                                                   white_p=self.recolor.get("white_p", 0.0),
+                                                   gray_bg_p=self.recolor.get("gray_bg_p", 0.0))
         dtf = self.domain_tf.get(item.domain)
         if dtf is not None:
             dtf.set_random_seed(int(rng.integers(2 ** 31)))

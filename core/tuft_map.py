@@ -5,7 +5,7 @@ So instead of re-finding every tuft in every frame, the map is built once:
 
   1. sample frames across the video, align each to a reference frame
      (ORB features + RANSAC similarity: camera shake / wing flex), detect
-     tufts with the AI model, and collect both ends of every detection;
+     tufts with the U-Net model, and collect both ends of every detection;
   2. cluster the ends; an end that recurs in many frames is a candidate root;
   3. a detection links its two ends. With a model that has a root output the
      detections come oriented and agree on the flow direction, so each pair's

@@ -10,7 +10,6 @@ venv/
 
 # Secrets / local config
 .env
-.claude/settings.local.json
 
 # OS clutter
 .DS_Store

@@ -1,4 +1,4 @@
-"""MP4 in, annotated MP4 + CSV out: AI tuft detection on a fixed tuft map.
+"""MP4 in, annotated MP4 + CSV out: U-Net tuft detection on a fixed tuft map.
 
     python -m tools.process_video flight.mp4
     python -m tools.process_video flight.mp4 --weights runs/<run>/checkpoints/best.pt --out results/flight

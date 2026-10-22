@@ -7,11 +7,13 @@ So instead of re-finding every tuft in every frame, the map is built once:
      (ORB features + RANSAC similarity: camera shake / wing flex), detect
      tufts with the AI model, and collect both ends of every detection;
   2. cluster the ends; an end that recurs in many frames is a candidate root;
-  3. a detection links its two ends. Which end is the root cannot be told
-     from one frame (the model's guess is a coin flip), but over a video the
-     root stays put while the tip wanders: that sets the flow direction, and
-     of each linked pair the upstream end is the root. Roots seen with and
-     without their tape tab, and steady tips, merge into one tuft;
+  3. a detection links its two ends. With a model that has a root output the
+     detections come oriented and agree on the flow direction, so each pair's
+     root is the end the model called root. Without one the guess is a coin
+     flip; then over a video the root stays put while the tip wanders: that
+     sets the flow direction, and of each linked pair the upstream end is the
+     root. Roots seen with and without their tape tab, and steady tips, merge
+     into one tuft;
   4. a human confirms the map once (tools.process_video: click to add or
      remove roots, f flips the flow if the estimate is wrong), then it is
      saved as <video>.tuftmap.json plus its reference frame (<map>.ref.png).
@@ -192,7 +194,7 @@ def anchors_from_detections(dets, n_frames, min_hits=0.3, radius=None, flow=None
         return [], (np.zeros(2) if flow is None else np.asarray(flow, float))
     n = len(dets)
     L = float(np.median([d[3] for d in dets]))
-    radius = radius or max(5.0, 0.18 * L)
+    radius = radius or max(4.0, 0.10 * L)       # far tufts are short and packed close together
     ends = np.array([d[1] for d in dets] + [d[2] for d in dets], float)
     frame_of = np.r_[[d[0] for d in dets], [d[0] for d in dets]]
     partner = np.r_[np.arange(n, 2 * n), np.arange(n)]          # index of the other end
@@ -216,6 +218,12 @@ def anchors_from_detections(dets, n_frames, min_hits=0.3, radius=None, flow=None
     pairs = [(a, b, cnt) for (a, b), cnt in links.most_common() if cnt >= 2]
 
     axis = det_axis(dets)
+    vecs_all = np.array([np.subtract(d[2], d[1]) for d in dets], float)
+    vecs_all /= np.linalg.norm(vecs_all, axis=1, keepdims=True) + 1e-9
+    agree = float((vecs_all @ axis).mean())       # ~0 when the end order is a coin flip
+    oriented = abs(agree) >= 0.3                  # detections come root-first (model has a root output)
+    if flow is None and oriented:
+        flow = axis * np.sign(agree)
     if flow is None:
         vote = 0.0
         for a, b, cnt in pairs:
@@ -227,11 +235,15 @@ def anchors_from_detections(dets, n_frames, min_hits=0.3, radius=None, flow=None
         flow = axis if vote >= 0 else -axis
     flow = np.asarray(flow, float) / (np.linalg.norm(flow) + 1e-12)
 
+    root_votes = Counter(int(labels[k]) for k in range(n))      # first end = the detector's root
     tip_clusters = set()
     for a, b, cnt in pairs:
         if a in tip_clusters or b in tip_clusters:
             continue
-        tip_clusters.add(b if (centres[b] - centres[a]) @ flow > 0 else a)    # the downstream end
+        if oriented and root_votes[a] != root_votes[b]:
+            tip_clusters.add(b if root_votes[a] > root_votes[b] else a)       # the model's root end
+        else:
+            tip_clusters.add(b if (centres[b] - centres[a]) @ flow > 0 else a)    # the downstream end
 
     anchors = []
     for c, centre in enumerate(centres):
@@ -252,7 +264,7 @@ def anchors_from_detections(dets, n_frames, min_hits=0.3, radius=None, flow=None
     return anchors, flow
 
 
-def drop_tip_duplicates(anchors, L, flow, reach=0.85, cone_deg=30.0):
+def drop_tip_duplicates(anchors, L, flow, reach=0.5, cone_deg=30.0):
     """Two anchors closer than about one tuft length and lined up with the flow
     are one tuft: the root seen with and without its tape tab, or a steady tip.
     The upstream one (the tape end) is kept and set to point downstream."""

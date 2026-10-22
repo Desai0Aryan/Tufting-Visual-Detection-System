@@ -18,9 +18,8 @@ python -m pip install "git+https://github.com/facebookresearch/sam2.git"
 2. MAKE TRAINING LABELS  (SAM 2 labeller)
 -----------------------------------------
 
-Photos are first downscaled to --norm-size (default 1400 px long side) so every
-tuft is ~15-110 px long, the size the detector limits and the U-Net crops assume.
-main.py uses the same default, so training and inference see the same scale.
+Photos are labelled at native resolution (no downscaling). Set the size limits
+(--min/max-length-px, --min/max-area) to match how big tufts are in your footage.
 
 For each photo, draw a polygon around the instrumented surface (click points,
 Enter = done, right-click = undo, Esc = whole image). Everything outside the
@@ -56,8 +55,6 @@ tool can remove false labels but cannot ADD tufts the labeller missed.
 
 python -m tools.review_labels --data data/vehicle_review
 
-Photos labelled BEFORE --norm-size existed have no "scale" in meta.json; train_unet
-warns about them. Re-run autolabel on those photos.
 
 
 3. TRAIN THE U-NET
@@ -90,19 +87,21 @@ python -m tools.eval_detection --data data/vehicle_review --backend unet --weigh
 
 python main.py --image Images/tuft4.jpg --backend unet --weights models/tuft_unet_vehicle.pt --outdir output --save-mask
 
-Optional extra false-positive filter (needs sam2 installed, slower):
-
-python main.py --image Images/tuft4.jpg --backend unet --weights models/tuft_unet_vehicle.pt --verify-sam2 --outdir output
-
 --threshold defaults to the value the checkpoint's own validation picked
-(models/<name>.pt.json); pass it only to override. --no-clean turns off the
-"must belong to the main cluster of tufts" filter. --select-roi still gives a
+(models/<name>.pt.json); pass it only to override. --clean turns on the
+"must belong to the main cluster of tufts" filter (off by default). --select-roi still gives a
 rectangle; use it to exclude surroundings.
 
 Classical backend (no training), pick the polarity that matches your tufts:
 
 python main.py --image Images/sample_tufts1.jpg --polarity dark
 python main.py --image Images/tuft4.jpg --polarity light
+
+Car images: white tufts on a dark surface, anchored with yellow tape
+(--tape-root picks the taped end as the root and drops unanchored strays):
+
+python main.py --image "Images/Car image Static..jpg" --outdir output --polarity light --tape-root --roi 600,650,1650,650 --block-size 101 --c 30 --min-area 500 --max-area 20000 --min-elongation 4 --min-length-px 100 --max-length-px 600
+python main.py --image "Images/car image moving.jpg" --outdir output --polarity light --tape-root --roi 740,480,2100,620 --block-size 101 --c 30 --min-area 500 --max-area 20000 --min-elongation 4 --min-length-px 100 --max-length-px 900
 
 Open the newest annotated image:
 

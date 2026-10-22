@@ -1,6 +1,7 @@
-opencv-python>=4.9
-numpy>=1.26
-pandas>=2.2
-scipy>=1.12
-scikit-image>=0.22
-torch>=2.2
+# Classical detector (no torch needed). Exact pins; see requirements-lock.txt
+# for the full, tested environment.
+opencv-python==5.0.0.93
+numpy==2.4.6
+pandas==3.0.6
+scipy==1.17.1
+scikit-image==0.26.0

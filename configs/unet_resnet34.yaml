@@ -1,0 +1,76 @@
+# U-Net (resnet34, ImageNet) tuft segmentation. Every hyperparameter lives here.
+# Run:  python -m tools.train --config configs/unet_resnet34.yaml
+# Override any key:  --set train.epochs=80 model.encoder=resnet50
+
+run:
+  name: unet_resnet34
+  out_dir: runs            # runs/<name>_<timestamp>/ (gitignored)
+  seed: 0
+  deterministic: false     # true = cudnn deterministic (slower, bit-reproducible)
+
+model:
+  arch: smp_unet
+  encoder: resnet34        # any segmentation_models_pytorch encoder, e.g. resnet50, efficientnet-b3
+  encoder_weights: imagenet
+  root_head: false         # 2nd output channel for the taped root; enable only if evaluate.py
+                           # shows a lower root/tip flip rate without hurting detection
+
+data:
+  sources_csv: sources.csv            # clip_id -> train/val/test (one clip, one split)
+  real: [data/real/labeled]           # reviewed real frames (incl. empty-mask hard negatives)
+  synthetic: []                       # OFF by default; e.g. [data/synthetic/train], train only
+  synthetic_share: 0.0                # fraction of training crops from synthetic data; keep 0
+                                      # unless evaluate.py's ablation shows it helps on real test
+  source_shares: null                 # fraction of training crops per label source, e.g.
+                                      # {dlr_polygon: 0.5, sam2_box: 0.5}; null = per frame
+  train_sources: null                 # only train on these label sources (e.g. [sam2_box] to pretrain)
+  source_weights:                     # tuft-loss weight per label source (meta.json "source")
+    sam2_box: 1.0                     # SAM 2 masks from dataset boxes; ablation tries 0.5
+  allow_synthetic_val: false          # smoke tests only: validate on synthetic when no real data
+  synthetic_val_fraction: 0.2         # used only with allow_synthetic_val
+  crop: 512                           # native-resolution crops; never downscaled
+  epoch_size: 2000                    # random crops per epoch
+  p_positive: 0.7                     # fraction of crops centred near a tuft
+  val_tile: 512
+  workers: 8
+  batch_size: 16
+
+aug:                                   # see src/transforms.py DEFAULT_AUG for every key
+  rotate_deg: 15
+  scale: [0.8, 1.25]
+  elastic_p: 0.15
+  shadow_gradient_p: 0.4
+  glare_p: 0.3
+  blur_p: 0.3
+  compression_p: 0.5
+  domain:                  # extra colour augmentation per data domain (meta.json "domain")
+    dlr: {hue_p: 0.5, gray_p: 0.3, invert_p: 0.3}   # DLR tufts are red/dark, ours are white
+    dlr_ec135: {hue_p: 0.5, gray_p: 0.3, invert_p: 0.3}  # same for the EC135 helicopter tail
+
+loss:
+  pos_weight: 2.0
+  w_bce: 1.0
+  w_dice: 1.0
+  w_cldice: 0.0            # soft-clDice weight; try 0.3-0.5 if masks come out broken
+  cldice_iters: 10
+  root_scale: 0.5
+
+optim:
+  lr: 3.0e-4
+  encoder_lr_mult: 0.3     # pretrained encoder learns slower than the fresh decoder
+  weight_decay: 1.0e-4
+  warmup_epochs: 2
+  min_lr_frac: 0.02        # cosine floor as a fraction of lr
+  grad_clip: 5.0
+
+train:
+  epochs: 60
+  amp: bf16                # bf16 | fp16 | off
+  channels_last: true
+  early_stop_patience: 12  # epochs without val improvement
+  select_metric: val_dice  # selection metric (best threshold) on our own val set,
+                           # or on the first other domain when we have none yet
+  thresholds: [0.3, 0.4, 0.5, 0.6, 0.7]
+  threshold_beta: 1.0      # F-beta used to pick the inference threshold on val
+  sample_every: 5          # write image | GT | prediction sheets every N epochs
+  sample_count: 8

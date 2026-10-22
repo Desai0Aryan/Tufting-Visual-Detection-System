@@ -109,3 +109,31 @@ open "$(ls -t output/*_annotated.png | head -n 1)"
 
 The annotated image, mask, and vector CSV are saved in output/.
 The detector cannot promise a fixed accuracy on arbitrary images; use step 4.
+
+6. RUN A VIDEO  (video -> frames -> same image detector -> annotated video)
+---------------------------------------------------------------------------
+
+Same detector/backends/options as images; just pass an MP4 (detected by extension, or use --video):
+
+python main.py --video Videos/tufts_flight1.mp4 --polarity auto
+python main.py Videos/tufts_flight1.mp4 --backend unet --weights models/tuft_unet_vehicle.pt
+
+Outputs in outputs/ (the default):
+  <name>_<time>_annotated.mp4   original video with flow arrows + tuft IDs on every frame
+  <name>_<time>_vectors.csv     time history: timestamp_s, frame, tuft_id, root/tip, unit_vector_x/y/z, ...
+
+Video-only options:
+  --frame-step N        process every Nth frame (faster; output video has just those frames, at fps/N)
+  --max-frames N        stop after N processed frames (quick test run)
+  --save-frames         also keep each annotated frame as a PNG in outputs/<name>_<time>_frames/
+  --select-roi / --roi  pick/give the region on the FIRST frame; it is used for every frame
+  --no-track            don't carry tuft IDs across frames (IDs are then per-frame numbers)
+  --track-dist PX       how far a tuft's root may move between frames and still be the same tuft (30)
+  --track-max-missing N frames a tuft may go undetected before its ID is retired (5)
+
+(For the full app / fixed tuft-map video workflow use: python -m tools.process_video <video>)
+
+--polarity auto is decided on the first frame and then kept for the whole video.
+If ffmpeg is installed (brew install ffmpeg) the output is re-encoded to H.264 so it plays in
+browsers/PowerPoint; without it you get OpenCV's mp4v MP4 (plays in VLC/QuickTime).
+Offline only - not live/camera input yet.

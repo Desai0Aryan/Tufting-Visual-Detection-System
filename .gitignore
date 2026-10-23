@@ -30,3 +30,6 @@ Images/
 *.mkv
 results/
 checkpoints/
+
+# TuftView dashboard: analyses are stored here
+dashboard_data/

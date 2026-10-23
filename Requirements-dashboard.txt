@@ -1,0 +1,7 @@
+# Extra packages for the TuftView dashboard (python -m dashboard).
+# Install on top of Requirements.txt:   python -m pip install -r Requirements.txt -r Requirements-dashboard.txt
+flask>=3.0
+waitress>=3.0          # production-grade local web server (falls back to Flask's own if missing)
+imageio-ffmpeg>=0.5    # bundled ffmpeg: writes MP4 (H.264) that every browser can play
+openpyxl>=3.1          # Excel download
+Pillow>=10.0           # opens pictures OpenCV cannot (e.g. AVIF/HEIC renamed to .jpg)

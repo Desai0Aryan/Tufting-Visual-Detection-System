@@ -30,7 +30,7 @@ network open it; `--port`, `--data DIR` and `--no-browser` are also available.
 |---|---|---|
 | 1 | MP4 in standard resolutions | `dashboard/analysis.py` (any size; settings scale with the picture) |
 | 2 | User-defined coordinate system | `coordinates.py`, Setup tab (2 points = scale+rotation, 3 = affine, 4+ = perspective) |
-| 3 | Automatic tuft location | existing detector + tracker (`core.Pipeline`); position = median root over the video, in your axes |
+| 3 | Automatic tuft location | trained U-Net + tuft map (`core.map_pipeline`), classical fallback; position = median root over the video, in your axes |
 | 4 | Optional user (X, Y, Z) per tuft | `coordinates.TuftLocations`; click a tuft, edit a cell in Data, or import `tuft_id,x,y,z` CSV |
 | 5 | Any background colour | tuft colour (light/dark) picked automatically from sample frames, or set by hand in Setup |
 | 6 | Video with flow vectors | `annotated.mp4` (H.264), plus a live, clickable overlay in the Video tab |
@@ -46,15 +46,30 @@ Flow state per tuft (steady / fluttering / stalled, from the existing stall anal
 timeline, direction-over-time chart, world grid overlay, coordinate axes in the exported video,
 area-of-interest picker, Excel workbook, ZIP of everything, saved history of analyses.
 
-## Detector choice
+## Detector choice: the trained U-Net is the default
 
-Automatic. If a U-Net checkpoint exists (`models/tuft_unet.pt`, or the newest
-`runs/*/checkpoints/best.pt`, or `$TUFT_WEIGHTS`) and PyTorch is installed, the U-Net is used;
-otherwise the classical detector with the README's settings scaled to the picture size. Pick
-manually under Setup > Analysis settings.
+Videos run the same pipeline as `python -m tools.process_video`, without its pop-up windows:
+
+1. The U-Net scans ~60 frames and builds a **tuft map** (one numbered root per tuft).
+2. Every frame is measured against that map (`core.map_pipeline.MapPipeline`), so each tuft keeps one ID for the
+   whole video and arrows always start at the root. The classical skeleton detector only fills in roots the model missed.
+
+The model is found automatically: path typed in Setup > Model file, `$TUFT_WEIGHTS`, `models/tuft_unet.pt`, then the
+newest `runs/*/checkpoints/best.pt`. PyTorch must be installed (`Requirements-train.txt`).
+
+If the model or PyTorch is missing, the dashboard says so (banner on Home and on the analysis, note in the sidebar)
+and falls back to the classical detector. Choosing "Trained model only" fails with a clear message instead of falling back.
+
+Setup tab:
+- **Camera**: "Fixed on the surface" uses the tuft map (most accurate); "Moves around" uses the model with the
+  free tracker (no map).
+- **Tuft map** card: click a dot to remove it, click empty space to add one, flip the flow direction, then
+  "Apply and analyze again". "Save map for other videos" stores it under a name; pick it under **Tuft map** on any
+  other video of the same aircraft and camera mount so tuft numbers stay the same.
+- Pictures use the U-Net directly (no map).
 
 ## Tests
 
 ```
-python -m unittest tests.test_coordinates tests.test_dashboard
+python -m unittest tests.test_coordinates tests.test_dashboard tests.test_dashboard_unet
 ```

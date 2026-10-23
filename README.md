@@ -256,6 +256,12 @@ Training options for these labels (YAML `aug:` or `--set`):
 | `aug.shuffle: {p, drop_frac, paste_max}` | erase some tufts (surface inpainted) and paste copies elsewhere at random angles, so tuft rows and spacing stop being a cue |
 | `aug.domain.own: {hue_p, gray_p, invert_p}` | colour inversion / grayscale for our footage (dark-on-white becomes white-on-dark) |
 
+## TuftView dashboard (web)
+
+Drag-and-drop web app for non-technical users: upload a video or pictures, watch the annotated result,
+click a tuft for its numbers, download CSV / Excel. Define a coordinate system and per-tuft (X, Y, Z) there too.
+See [DASHBOARD.md](DASHBOARD.md); start with `Start-TuftView.command` (Mac), `Start-TuftView.bat` (Windows) or `python -m dashboard`.
+
 ## TuftView desktop app
 
 ```powershell

@@ -241,8 +241,10 @@ function renderChips(j) {
   const c = [];
   if (j.kind === "video") c.push(`<span class="chip"><b>${clock(j.info.duration)}</b> video</span>`);
   c.push(`<span class="chip"><b>${j.info.width}×${j.info.height}</b></span>`);
-  if (j.status === "done") { c.push(`<span class="chip"><b>${j.tufts}</b> tufts</span>`); if (j.stats && j.stats.engine) c.push(`<span class="chip">${esc(j.stats.engine.replace(/\s*\([^)]*\)/, ""))}</span>`); }
+  if (j.status === "done") { c.push(`<span class="chip"><b>${j.tufts}</b> tufts</span>`); if (j.stats && j.stats.engine) c.push(`<span class="chip">${esc(j.stats.engine.replace(/\s*\([^)]*\)/, "").replace(/, tuft map.*/, ""))}</span>`); }
   $("#runChips").innerHTML = c.join("");
+  const w = (j.stats && j.stats.warnings) || [];
+  const bw = $("#runWarn"); bw.hidden = !w.length; bw.innerHTML = w.map(esc).join("<br>");
 }
 async function loadResults(j) {
   const [res, ov, sm, st] = await Promise.all([api(`/jobs/${j.id}/results.json`), api(`/jobs/${j.id}/overview.json`), api(`/jobs/${j.id}/summary.json`), api(`/jobs/${j.id}/setup`)]);
@@ -602,6 +604,9 @@ function renderSetup(j) {
   $("#zPlane").value = (G.setup.coords && G.setup.coords.z_plane) || 0; $("#liftOn").checked = !!G.setup.estimate_lift;
   $("#yUp").checked = G.setup.coords && G.setup.coords.y_up !== false;
   const o = j.options || {}; $("#optPol").value = o.polarity || "auto"; $("#optSize").value = o.size || "auto"; $("#optStep").value = String(o.step || 0); $("#optEngine").value = o.engine || "auto";
+  $("#optTrack").value = o.tracking || "map"; $("#optWeights").value = o.weights || "";
+  $("#optTrackWrap").hidden = $("#optMapWrap").hidden = j.kind !== "video";
+  fillMapNames(o.map_name || ""); loadMapCard(j);
   $("#optStepWrap").hidden = j.kind !== "video"; if (G.roi === null && o.roi) G.roi = o.roi; $("#roiTxt").textContent = G.roi ? `${G.roi[2]}×${G.roi[3]} px area chosen` : "Whole picture";
   syncCoordUi(); requestAnimationFrame(drawCoord);
 }
@@ -720,14 +725,78 @@ roi.cv.addEventListener("pointermove", e => { if (!roi.drag) return; const p = r
 roi.cv.addEventListener("pointerup", () => (roi.drag = null));
 $("#reBtn").addEventListener("click", async () => {
   if (!confirm("Analyze this file again with these settings? The current results are replaced.")) return;
-  try { await api(`/jobs/${G.cur}/reanalyze`, { json: { polarity: $("#optPol").value, size: $("#optSize").value, step: Number($("#optStep").value), engine: $("#optEngine").value, roi: G.roi } }); G.loadedId = null; await pollOnce(); }
+  try { await api(`/jobs/${G.cur}/reanalyze`, { json: { polarity: $("#optPol").value, size: $("#optSize").value, step: Number($("#optStep").value), engine: $("#optEngine").value, tracking: $("#optTrack").value, weights: $("#optWeights").value, map_name: $("#optMapName").value, map_mode: "build", roi: G.roi } }); G.loadedId = null; await pollOnce(); }
   catch (e) { toast(e.message, true); }
+});
+/* ---- tuft map review (trained model) */
+const TM = { map: null, add: [], remove: new Set(), flip: false, img: new Image(), jid: null };
+function fillMapNames(sel) {
+  const names = (G.status && G.status.maps) || [];
+  $("#optMapName").innerHTML = `<option value="">Build from this video</option>` + names.map(n => `<option>${esc(n)}</option>`).join("");
+  $("#optMapName").value = names.includes(sel) ? sel : "";
+}
+async function loadMapCard(j) {
+  const card = $("#mapCard");
+  if (j.kind !== "video" || j.status !== "done") { card.hidden = true; return; }
+  try {
+    const r = await api(`/jobs/${j.id}/map`);
+    if (!r.map) { card.hidden = true; return; }
+    TM.map = r.map; TM.add = []; TM.remove = new Set(); TM.jid = j.id; $("#mapFlip").hidden = !r.map.can_flip;
+    G.status = G.status || {}; G.status.maps = r.saved; fillMapNames(($("#optMapName").value) || "");
+    TM.img.onload = drawMap; TM.img.src = `/api/jobs/${j.id}/map_ref.jpg?v=${Date.now()}`;
+    card.hidden = false; setMsg("#mapMsg", "");
+  } catch (_) { card.hidden = true; }
+}
+function drawMap() {
+  const cv = $("#mapCv"), m = TM.map; if (!m || !TM.img.naturalWidth) return;
+  const W = TM.img.naturalWidth, H = TM.img.naturalHeight; cv.width = W; cv.height = H;
+  const c = cv.getContext("2d"); c.drawImage(TM.img, 0, 0);
+  const k = Math.max(W, H) / 900, ang = Math.atan2(m.flow[1], m.flow[0]);
+  const len = 34 * k;
+  const dot = (x, y, col, ring) => {
+    c.lineWidth = 2 * k; c.strokeStyle = col; c.fillStyle = ring ? "rgba(0,0,0,0)" : col;
+    c.beginPath(); c.arc(x, y, 5 * k, 0, 6.3); ring ? c.stroke() : c.fill();
+    c.beginPath(); c.moveTo(x, y); c.lineTo(x + Math.cos(ang) * len, y + Math.sin(ang) * len); c.stroke();
+  };
+  m.anchors.forEach(a => { const gone = TM.remove.has(a.id); dot(a.x, a.y, gone ? "#ef4444" : "#4ade80", gone); });
+  TM.add.forEach(p => dot(p[0], p[1], "#38bdf8", false));
+  const n = m.anchors.length - TM.remove.size + TM.add.length;
+  $("#mapTxt").textContent = `${n} tufts` + (TM.flip ? " · direction will be flipped" : "");
+}
+$("#mapCv").addEventListener("click", e => {
+  const cv = e.currentTarget, r = cv.getBoundingClientRect(), x = (e.clientX - r.left) * cv.width / r.width, y = (e.clientY - r.top) * cv.height / r.height;
+  const reach = 14 * Math.max(cv.width, cv.height) / 900;
+  let best = null, bd = 1e9;
+  TM.map.anchors.forEach(a => { const d = Math.hypot(a.x - x, a.y - y); if (d < bd) { bd = d; best = a; } });
+  const q = TM.add.findIndex(p => Math.hypot(p[0] - x, p[1] - y) < reach);
+  if (q >= 0) TM.add.splice(q, 1);
+  else if (best && bd < reach) { TM.remove.has(best.id) ? TM.remove.delete(best.id) : TM.remove.add(best.id); }
+  else TM.add.push([x, y]);
+  drawMap();
+});
+$("#mapFlip").addEventListener("click", () => { TM.flip = !TM.flip; $("#mapFlip").classList.toggle("on", TM.flip); drawMap(); });
+$("#mapUndo").addEventListener("click", () => { TM.add = []; TM.remove = new Set(); TM.flip = false; drawMap(); });
+async function commitMap() {
+  if (!TM.add.length && !TM.remove.size && !TM.flip) return;
+  const r = await api(`/jobs/${TM.jid}/map`, { method: "PUT", json: { add: TM.add, remove: [...TM.remove], flip: TM.flip } });
+  TM.map = r.map; TM.add = []; TM.remove = new Set(); TM.flip = false; drawMap();
+}
+$("#mapSave").addEventListener("click", async () => {
+  try { await commitMap(); const r = await api(`/jobs/${TM.jid}/map/save`, { json: { name: $("#mapName").value } });
+    G.status.maps = r.saved; fillMapNames(r.name); setMsg("#mapMsg", `Saved as “${r.name}”. Pick it under Tuft map to use it on other videos.`, "ok"); }
+  catch (e) { setMsg("#mapMsg", e.message, "err"); }
+});
+$("#mapApply").addEventListener("click", async () => {
+  if (!confirm("Analyze again with this tuft map? The current results are replaced.")) return;
+  try { await commitMap(); await api(`/jobs/${G.cur}/reanalyze`, { json: { map_mode: "keep", map_name: "", tracking: "map", engine: $("#optEngine").value, weights: $("#optWeights").value, step: Number($("#optStep").value) } }); G.loadedId = null; await pollOnce(); }
+  catch (e) { setMsg("#mapMsg", e.message, "err"); }
 });
 async function pollOnce() { const list = await api("/jobs"); G.jobs = list; renderRail(); openJob(G.cur, true, true); }
 
 /* ---------------------------------------------------------------- start */
 (async function init() {
-  try { const s = await api("/status"); $("#engineNote").textContent = s.engine; } catch (_) {}
+  try { const s = await api("/status"); G.status = s; $("#engineNote").textContent = s.engine + (s.warning ? " — not available" : "");
+    const hw = $("#homeWarn"); hw.hidden = !s.warning; hw.textContent = s.warning ? "The trained model is not being used: " + s.warning + " Until then the less accurate classic detector runs." : ""; } catch (_) {}
   try { G.jobs = await api("/jobs"); } catch (_) {}
   renderRail(); route(); pollJobs();
 })();

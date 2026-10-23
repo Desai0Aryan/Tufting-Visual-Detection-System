@@ -307,3 +307,15 @@ table.grid { width: 100%; border-collapse: separate; border-spacing: 0; font-siz
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; }
 }
+
+/* trained-model warnings + tuft map review */
+.banner.warn { margin-top: 10px; padding: 10px 14px; border-radius: 12px; font-size: 13.5px; line-height: 1.4;
+  background: color-mix(in srgb, #f5a524 16%, var(--surface)); border: 1px solid color-mix(in srgb, #f5a524 45%, var(--line)); color: var(--ink); }
+.banner.warn[hidden] { display: none; }
+.fields .wide { grid-column: 1 / -1; }
+.fields input[type=text] { width: 100%; }
+.map-stage { position: relative; margin: 8px 0 10px; border-radius: 12px; overflow: hidden; background: #0d141b; }
+.map-stage canvas { display: block; width: 100%; height: auto; cursor: crosshair; }
+#mapCard input[type=text] { flex: 1 1 180px; min-width: 0; }
+#mapCard input[type=text] { height: 38px; border-radius: 10px; border: 1px solid var(--line); background: var(--sunken); padding: 0 10px; color: var(--ink); }
+.fields input[type=text] { height: 38px; border-radius: 10px; border: 1px solid var(--line); background: var(--sunken); padding: 0 10px; color: var(--ink); }

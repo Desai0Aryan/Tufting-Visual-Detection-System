@@ -55,6 +55,7 @@
           </div>
           <div class="composer-text" id="composerText">Drop videos or pictures here, or press <b>+</b></div>
           <div class="composer-hint">MP4 · JPG · PNG</div>
+          <div class="banner warn" id="homeWarn" hidden></div>
         </div>
         <ul class="uploads" id="uploads"></ul>
       </div>
@@ -66,6 +67,7 @@
         <div class="run-title">
           <h2 id="runName">—</h2>
           <div class="chips" id="runChips"></div>
+          <div class="banner warn" id="runWarn" hidden></div>
         </div>
         <div class="run-actions">
           <div class="dl" id="dlWrap">
@@ -237,17 +239,26 @@
             <section class="card">
               <h4>Analysis settings</h4>
               <div class="fields two">
-                <label>Tuft colour
+                <label>Tuft colour <span class="muted">(classic detector only)</span>
                   <select id="optPol"><option value="auto">Find automatically</option><option value="light">Light on dark</option><option value="dark">Dark on light</option></select>
                 </label>
-                <label>Tuft size
+                <label>Tuft size <span class="muted">(classic detector only)</span>
                   <select id="optSize"><option value="auto">Automatic</option><option value="small">Small</option><option value="large">Large</option></select>
                 </label>
                 <label id="optStepWrap">Detail
                   <select id="optStep"><option value="0">Automatic</option><option value="1">Every frame</option><option value="2">Every 2nd frame</option><option value="4">Every 4th frame</option></select>
                 </label>
                 <label>Detector
-                  <select id="optEngine"><option value="auto">Automatic</option><option value="classical">Classical</option><option value="unet">U-Net</option></select>
+                  <select id="optEngine"><option value="auto">Automatic (trained model)</option><option value="unet">Trained model only</option><option value="classical">Classic detector</option></select>
+                </label>
+                <label id="optTrackWrap">Camera
+                  <select id="optTrack"><option value="map">Fixed on the surface (most accurate)</option><option value="free">Moves around</option></select>
+                </label>
+                <label id="optMapWrap">Tuft map
+                  <select id="optMapName"><option value="">Build from this video</option></select>
+                </label>
+                <label class="wide">Model file <span class="muted">(optional)</span>
+                  <input id="optWeights" type="text" placeholder="Leave empty to use models/tuft_unet.pt" spellcheck="false">
                 </label>
               </div>
               <div class="row wrap">
@@ -256,6 +267,23 @@
                 <span class="grow"></span>
                 <button class="btn solid" id="reBtn" type="button">Analyze again</button>
               </div>
+            </section>
+            <section class="card" id="mapCard" hidden>
+              <h4>Tuft map</h4>
+              <p class="muted small">Each dot is one tuft root found by the trained model. Click a dot to remove it, click empty space to add a tuft. If the arrows point the wrong way, flip the direction.</p>
+              <div class="map-stage"><canvas id="mapCv"></canvas></div>
+              <div class="row wrap">
+                <span class="muted" id="mapTxt"></span><span class="grow"></span>
+                <button class="btn" id="mapFlip" type="button">Flip flow direction</button>
+                <button class="btn" id="mapUndo" type="button">Undo edits</button>
+              </div>
+              <div class="row wrap">
+                <input id="mapName" type="text" placeholder="Name, e.g. Wing camera 1" maxlength="60">
+                <button class="btn" id="mapSave" type="button">Save map for other videos</button>
+                <span class="grow"></span>
+                <button class="btn solid" id="mapApply" type="button">Apply and analyze again</button>
+              </div>
+              <div class="msg" id="mapMsg"></div>
             </section>
           </div>
         </div>

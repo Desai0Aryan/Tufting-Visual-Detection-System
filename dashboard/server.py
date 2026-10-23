@@ -13,7 +13,7 @@ from flask import Flask, Response, abort, jsonify, request, send_file, send_from
 
 from coordinates import CoordinateError, CoordinateSystem, LocationError, TuftLocations
 
-from . import ROOT, __version__, analysis, tables
+from . import ROOT, __version__, analysis, tables, unet_video
 from .jobs import JobStore
 
 STATIC = Path(__file__).parent / "static"
@@ -22,6 +22,7 @@ STATIC = Path(__file__).parent / "static"
 def create_app(data_dir=None):
     data_dir = Path(data_dir or os.environ.get("TUFTVIEW_DATA") or ROOT / "dashboard_data")
     store = JobStore(data_dir)
+    unet_video.LIBRARY = data_dir / "maps"
     app = Flask(__name__, static_folder=None)
     app.config["MAX_CONTENT_LENGTH"] = 8 * 1024 ** 3
     app.store = store
@@ -92,9 +93,62 @@ def create_app(data_dir=None):
 
     @app.get("/api/status")
     def status():
-        engine, weights, note = analysis.pick_engine(analysis.Options())
-        return jsonify(version=__version__, engine=note, unet=engine == "unet",
+        st = analysis.engine_status(_safe_opts())
+        return jsonify(version=__version__, engine=st["note"], unet=st["engine"] == "unet", warning=st["warning"],
+                       weights=st["weights"], maps=unet_video.library_names(),
                        ffmpeg=bool(__import__("dashboard.media", fromlist=["x"]).ffmpeg_exe()))
+
+    def _safe_opts():
+        try:
+            return analysis.Options.from_dict({"weights": request.args.get("weights", "")})
+        except Exception:
+            return analysis.Options()
+
+    # ------------------------------------------------------------ tuft map (trained-model tracking)
+    @app.get("/api/jobs/<jid>/map")
+    def get_map(jid):
+        job_or_404(jid)
+        try:
+            d = unet_video.describe(store.dir(jid))
+        except ImportError:
+            d = None
+        return jsonify(map=d, saved=unet_video.library_names())
+
+    @app.put("/api/jobs/<jid>/map")
+    def put_map(jid):
+        job_or_404(jid)
+        b = request.get_json(silent=True) or {}
+        try:
+            d = unet_video.edit(store.dir(jid), add=[(p[0], p[1]) for p in b.get("add", [])],
+                                remove=b.get("remove", []), flip=bool(b.get("flip")))
+        except (ValueError, KeyError, TypeError, IndexError) as exc:
+            abort(400, str(exc))
+        return jsonify(map=d)
+
+    @app.get("/api/jobs/<jid>/map_ref.jpg")
+    def map_ref(jid):
+        job_or_404(jid)
+        p = Path(str(unet_video.map_path(store.dir(jid))) + ".ref.png")
+        if not p.exists():
+            p = store.dir(jid) / "first_frame.jpg"
+        return send_file(p, max_age=0)
+
+    @app.post("/api/jobs/<jid>/map/save")
+    def save_map(jid):
+        job_or_404(jid)
+        try:
+            name = unet_video.save_to_library(store.dir(jid), (request.get_json(silent=True) or {}).get("name", ""))
+        except ValueError as exc:
+            abort(400, str(exc))
+        return jsonify(name=name, saved=unet_video.library_names())
+
+    @app.get("/api/jobs/<jid>/tuftmap.json")
+    def dl_map(jid):
+        job_or_404(jid)
+        p = unet_video.map_path(store.dir(jid))
+        if not p.exists():
+            abort(404, "This analysis has no tuft map.")
+        return send_file(p, as_attachment=True, download_name="tuftmap.json")
 
     # ------------------------------------------------------------ jobs
     @app.get("/api/jobs")

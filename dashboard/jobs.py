@@ -173,9 +173,9 @@ class JobStore:
         self.update(jid, status="running", progress=0.0, message="Starting", error="")
         t_last = [0.0]
 
-        def progress(done, total, tufts, eta, fps, preview=None):
-            frac = done / total if total else 0.0
-            msg = f"Frame {done} of {total}" if total > 1 else "Looking for tufts"
+        def progress(done, total, tufts, eta, fps, preview=None, frac=None, message=None):
+            frac = (done / total if total else 0.0) if frac is None else frac
+            msg = message or (f"Frame {done} of {total}" if total > 1 else "Looking for tufts")
             self.update(jid, progress=round(frac, 4), tufts=int(tufts), eta=eta, message=msg,
                         fps=round(fps, 2))
             if preview is not None and time.time() - t_last[0] > 0.45:

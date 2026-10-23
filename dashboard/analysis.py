@@ -40,7 +40,10 @@ class Options:
     size: str = "auto"          # auto / small / large (multiplies the tuft length limits)
     step: int = 0               # analyse every Nth frame; 0 = automatic
     roi: Optional[list] = None  # [x, y, w, h] in video pixels, or None for the whole picture
-    weights: str = ""
+    weights: str = ""           # path to a model (.pt); empty = find one automatically
+    tracking: str = "map"       # map = camera fixed on the surface (tuft map, most accurate); free = any camera
+    map_mode: str = "build"     # build a tuft map from the video, or keep the one already saved for this analysis
+    map_name: str = ""          # a tuft map saved earlier for the same aircraft / camera mount
 
     @classmethod
     def from_dict(cls, d):
@@ -52,6 +55,12 @@ class Options:
             o.polarity = "auto"
         if o.size not in ("auto", "small", "large"):
             o.size = "auto"
+        if o.tracking not in ("map", "free"):
+            o.tracking = "map"
+        if o.map_mode not in ("build", "keep"):
+            o.map_mode = "build"
+        o.weights = str(o.weights or "").strip().strip('"')
+        o.map_name = "".join(ch for ch in str(o.map_name or "") if ch.isalnum() or ch in "-_ .")[:60].strip()
         try:
             o.step = max(0, int(o.step))
         except (TypeError, ValueError):
@@ -69,14 +78,14 @@ class Options:
 def torch_available():
     try:
         import torch  # noqa: F401
-        import segmentation_models_pytorch  # noqa: F401
         return True
     except Exception:
         return False
 
 
 def find_weights(explicit=""):
-    """The U-Net checkpoint to use: explicit > $TUFT_WEIGHTS > models/tuft_unet.pt > newest runs/*/checkpoints/best.pt."""
+    """The trained model to use: the path typed in Setup > $TUFT_WEIGHTS > models/tuft_unet.pt (the default of
+    tools.process_video) > the newest runs/*/checkpoints/best.pt."""
     from . import ROOT
     cands = [explicit, os.environ.get("TUFT_WEIGHTS", ""), str(ROOT / "models" / "tuft_unet.pt")]
     runs = sorted(glob.glob(str(ROOT / "runs" / "*" / "checkpoints" / "best.pt")), key=os.path.getmtime, reverse=True)
@@ -86,17 +95,31 @@ def find_weights(explicit=""):
     return ""
 
 
-def pick_engine(opts: Options):
-    """-> (engine, weights, note). Falls back to the classical detector when the U-Net cannot run."""
+def engine_status(opts=None):
+    """What would run right now: {engine, weights, note, warning}. `warning` is set when the trained model
+    could not be used and the less accurate classical detector takes over (the dashboard shows it)."""
+    opts = opts or Options()
     if opts.engine == "classical":
-        return "classical", "", "Classical detector (chosen)"
+        return {"engine": "classical", "weights": "", "note": "Classical detector (chosen)", "warning": ""}
     w = find_weights(opts.weights)
-    if not w:
-        why = "no trained U-Net checkpoint found" if opts.engine == "auto" else "no checkpoint found, using classical"
-        return "classical", "", f"Classical detector ({why})"
-    if not torch_available():
-        return "classical", "", "Classical detector (PyTorch is not installed)"
-    return "unet", w, f"U-Net ({Path(w).name})"
+    why = ""
+    if opts.weights and not Path(opts.weights).is_file():
+        why = f"The model file you entered was not found: {opts.weights}"
+    elif not w:
+        why = "No trained model found. Put it at models/tuft_unet.pt or finish a training run (runs/<name>/checkpoints/best.pt), then analyze again."
+    elif not torch_available():
+        why = "PyTorch is not installed in this Python, so the trained model cannot run. Install Requirements-train.txt."
+    if why:
+        if opts.engine == "unet":
+            raise ValueError(why)
+        return {"engine": "classical", "weights": "", "note": "Classical detector", "warning": why}
+    return {"engine": "unet", "weights": w, "note": f"U-Net ({Path(w).name})", "warning": ""}
+
+
+def pick_engine(opts: Options):
+    """-> (engine, weights, note). Kept for callers that do not need the warning."""
+    e = engine_status(opts)
+    return e["engine"], e["weights"], e["note"]
 
 
 def classical_params(width, height, opts: Options):
@@ -202,26 +225,40 @@ def analyze_video(src, out_dir, opts: Options, progress: Callable, cancelled: Ca
     w, h, fps, n = info["width"], info["height"], info["fps"], info["frames"]
     step = opts.step or max(1, math.ceil(n / TARGET_FRAMES)) if n else max(1, opts.step)
     roi = _roi(opts, w, h)
-    engine, weights, note = pick_engine(opts)
+    status = engine_status(opts)
+    engine, weights, note = status["engine"], status["weights"], status["note"]
+    warnings = [status["warning"]] if status["warning"] else []
 
+    runner = None
+    pipe = None
     polarity = "light"
-    if engine == "classical":
-        cap = cv2.VideoCapture(str(src))
-        samples = []
-        for pos in ([0] if n < 4 else [0, n // 3, (2 * n) // 3]):
-            cap.set(cv2.CAP_PROP_POS_FRAMES, pos)
-            ok, f = cap.read()
-            if ok:
-                samples.append(f)
-        cap.release()
-        polarity = resolve_polarity(samples or [first], w, h, opts, roi)
-        note += f", {polarity} tufts"
-
-    from core import Pipeline
-    cfg = _pipeline_config(engine, weights, polarity, w, h, opts)
-    pipe = Pipeline(cfg, fps=fps / step)
-    if roi is not None:
-        pipe.detector.roi = roi
+    if engine == "unet" and opts.tracking == "map":
+        from . import unet_video
+        runner = unet_video.MapRunner(src, out_dir, opts, weights, fps / step, progress, cancelled)
+        note = runner.note
+        warnings += runner.warnings
+        if roi is not None:
+            warnings.append("The analysis area is ignored with the tuft map (the map already fixes where the tufts are).")
+            roi = None
+        process = lambda frame, k, t: runner.process(frame, k, t)
+    else:
+        if engine == "classical":
+            cap = cv2.VideoCapture(str(src))
+            samples = []
+            for pos in ([0] if n < 4 else [0, n // 3, (2 * n) // 3]):
+                cap.set(cv2.CAP_PROP_POS_FRAMES, pos)
+                ok, f = cap.read()
+                if ok:
+                    samples.append(f)
+            cap.release()
+            polarity = resolve_polarity(samples or [first], w, h, opts, roi)
+            note += f", {polarity} tufts"
+        from core import Pipeline
+        cfg = _pipeline_config(engine, weights, polarity, w, h, opts)
+        pipe = Pipeline(cfg, fps=fps / step)
+        if roi is not None:
+            pipe.detector.roi = roi
+        process = lambda frame, k, t: pipe.process_frame(frame, index=k, time_s=t).visible()
 
     out_fps = fps / step
     times, frames_out = [], []
@@ -241,8 +278,7 @@ def analyze_video(src, out_dir, opts: Options, progress: Callable, cancelled: Ca
                 continue
             if cancelled():
                 raise Cancelled()
-            res = pipe.process_frame(frame, index=done, time_s=idx / fps)
-            recs = [_rec(t) for t in res.visible()]
+            recs = [_rec(t) for t in process(frame, done, idx / fps)]
             times.append(round(idx / fps, 4))
             frames_out.append(recs)
             tuft_total += len(recs)
@@ -262,10 +298,11 @@ def analyze_video(src, out_dir, opts: Options, progress: Callable, cancelled: Ca
 
     results = {"kind": "video", "fps": fps, "step": step, "width": w, "height": h, "engine": note,
                "browser_video": writer.browser_ok, "fields": FIELDS, "times": times, "frames": frames_out,
-               "roi": list(roi) if roi else None, "polarity": polarity if engine == "classical" else None}
+               "roi": list(roi) if roi else None, "polarity": polarity if engine == "classical" else None,
+               "tracking": "map" if runner else "free", "warnings": warnings}
     save_results(out_dir / "results.json.gz", results)
     ids = {r[0] for f in frames_out for r in f}
-    return {"frames": done, "tufts_total": len(ids), "mean_tufts": tuft_total / max(done, 1),
+    return {"warnings": warnings, "tracking": results["tracking"], "engine_kind": engine, "frames": done, "tufts_total": len(ids), "mean_tufts": tuft_total / max(done, 1),
             "seconds": time.time() - t0, "engine": note, "step": step, "browser_video": writer.browser_ok}
 
 
@@ -285,7 +322,8 @@ def analyze_image(src, out_dir, opts: Options, progress: Callable, cancelled: Ca
             raise ValueError("This picture could not be read. Use a JPG or PNG file.")
     h, w = img.shape[:2]
     roi = _roi(opts, w, h)
-    engine, weights, note = pick_engine(opts)
+    status = engine_status(opts)
+    engine, weights, note = status["engine"], status["weights"], status["note"]
     t0 = time.time()
     progress(done=0, total=1, tufts=0, eta=None, fps=0, preview=img)
 
@@ -323,10 +361,12 @@ def analyze_image(src, out_dir, opts: Options, progress: Callable, cancelled: Ca
     cv2.imencode(".jpg", ann, [cv2.IMWRITE_JPEG_QUALITY, 93])[1].tofile(str(out_dir / "annotated.jpg"))
     results = {"kind": "image", "fps": 1.0, "step": 1, "width": w, "height": h, "engine": note,
                "browser_video": False, "fields": FIELDS, "times": [0.0], "frames": [recs],
-               "roi": list(roi) if roi else None, "polarity": polarity}
+               "roi": list(roi) if roi else None, "polarity": polarity, "tracking": "free",
+               "warnings": [status["warning"]] if status["warning"] else []}
     save_results(out_dir / "results.json.gz", results)
     progress(done=1, total=1, tufts=len(recs), eta=0, fps=0, preview=ann)
-    return {"frames": 1, "tufts_total": len(recs), "mean_tufts": float(len(recs)),
+    return {"warnings": results["warnings"], "tracking": "free", "engine_kind": engine,
+            "frames": 1, "tufts_total": len(recs), "mean_tufts": float(len(recs)),
             "seconds": time.time() - t0, "engine": note, "step": 1, "browser_video": False}
 
 

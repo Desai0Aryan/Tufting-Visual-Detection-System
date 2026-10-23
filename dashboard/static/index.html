@@ -1,0 +1,278 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TuftView</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='9' fill='%230B8FA8'/%3E%3Cpath d='M9 20 C15 20 17 12 24 11' fill='none' stroke='white' stroke-width='2.6' stroke-linecap='round'/%3E%3Crect x='6' y='18' width='5' height='5' rx='1' fill='%23fff'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+<div class="shell" id="shell">
+
+  <aside class="rail" id="rail" aria-label="Your analyses">
+    <div class="brand">
+      <svg class="logo" viewBox="0 0 32 32" aria-hidden="true"><rect width="32" height="32" rx="9" fill="currentColor"/><path d="M9 20 C15 20 17 12 24 11" fill="none" stroke="#fff" stroke-width="2.6" stroke-linecap="round"/><rect x="6" y="18" width="5" height="5" rx="1" fill="#fff"/></svg>
+      <span class="brand-name">TuftView</span>
+    </div>
+    <button class="btn new" id="newBtn" type="button">
+      <svg viewBox="0 0 20 20" width="16" height="16" aria-hidden="true"><path d="M10 4v12M4 10h12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+      New analysis
+    </button>
+    <div class="rail-head">Your analyses</div>
+    <ul class="runs" id="runs"></ul>
+    <p class="rail-empty" id="railEmpty">Nothing yet. Drop a video to start.</p>
+    <div class="rail-foot" id="engineNote"></div>
+  </aside>
+
+  <main class="main" id="main">
+    <button class="rail-toggle" id="railToggle" type="button" aria-label="Show analyses">
+      <svg viewBox="0 0 20 20" width="18" height="18"><path d="M3 5h14M3 10h14M3 15h14" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+    </button>
+
+    <!-- ============ HOME ============ -->
+    <section class="home" id="home">
+      <canvas id="field" aria-hidden="true"></canvas>
+      <div class="home-inner">
+        <h1>See which way the air pushes every tuft.</h1>
+        <p class="lede">Drop in a video or pictures of your tufts. TuftView finds each tuft, draws its flow direction, and gives you the numbers as a spreadsheet.</p>
+
+        <div class="composer" id="composer">
+          <div class="plus-wrap">
+            <button class="plus" id="plusBtn" type="button" aria-haspopup="menu" aria-expanded="false" aria-label="Add files">
+              <svg viewBox="0 0 24 24" width="22" height="22"><path d="M12 5v14M5 12h14" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+            </button>
+            <div class="menu" id="plusMenu" role="menu" hidden>
+              <button role="menuitem" type="button" id="menuUpload">
+                <svg viewBox="0 0 20 20" width="18" height="18"><path d="M10 13V4M6.5 7.5L10 4l3.5 3.5M4 13v2.5a1 1 0 001 1h10a1 1 0 001-1V13" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                <span>Upload from this computer<small>MP4 videos, JPG or PNG pictures</small></span>
+              </button>
+              <button role="menuitem" type="button" id="menuDemo">
+                <svg viewBox="0 0 20 20" width="18" height="18"><path d="M5 4.5v11l10-5.5z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></svg>
+                <span>Try a sample clip<small>A made-up wind tunnel video</small></span>
+              </button>
+            </div>
+          </div>
+          <div class="composer-text" id="composerText">Drop videos or pictures here, or press <b>+</b></div>
+          <div class="composer-hint">MP4 · JPG · PNG</div>
+        </div>
+        <ul class="uploads" id="uploads"></ul>
+      </div>
+    </section>
+
+    <!-- ============ RUN ============ -->
+    <section class="run" id="run" hidden>
+      <header class="run-head">
+        <div class="run-title">
+          <h2 id="runName">—</h2>
+          <div class="chips" id="runChips"></div>
+        </div>
+        <div class="run-actions">
+          <div class="dl" id="dlWrap">
+            <button class="btn solid" id="dlBtn" type="button" aria-haspopup="menu" aria-expanded="false">
+              <svg viewBox="0 0 20 20" width="16" height="16"><path d="M10 3.5v9M6.5 9L10 12.5 13.5 9M4 15.5h12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              Download
+            </button>
+            <div class="menu right" id="dlMenu" role="menu" hidden></div>
+          </div>
+        </div>
+      </header>
+
+      <nav class="tabs" id="tabs" role="tablist">
+        <button role="tab" data-tab="video" type="button">Video</button>
+        <button role="tab" data-tab="data" type="button">Data</button>
+        <button role="tab" data-tab="setup" type="button">Setup</button>
+      </nav>
+
+      <!-- working -->
+      <div class="panel working" id="working" hidden>
+        <div class="work-stage">
+          <img id="workImg" alt="Live preview of the analysis">
+          <div class="scan" aria-hidden="true"></div>
+        </div>
+        <div class="work-side">
+          <div class="ring" id="ring"><svg viewBox="0 0 120 120"><circle cx="60" cy="60" r="52" class="ring-bg"/><circle cx="60" cy="60" r="52" class="ring-fg" id="ringFg"/></svg><span id="ringTxt">0%</span></div>
+          <h3 id="workTitle">Finding tufts</h3>
+          <p class="muted" id="workMsg">Starting…</p>
+          <dl class="kv">
+            <div><dt>Tufts in view</dt><dd id="workTufts">0</dd></div>
+            <div><dt>Time left</dt><dd id="workEta">—</dd></div>
+          </dl>
+          <button class="btn" id="cancelBtn" type="button">Cancel</button>
+        </div>
+      </div>
+
+      <!-- failed -->
+      <div class="panel failed" id="failed" hidden>
+        <h3>This one didn’t finish</h3>
+        <p id="failMsg" class="muted"></p>
+        <div class="row"><button class="btn solid" id="retryBtn" type="button">Try again</button><button class="btn" id="failDel" type="button">Remove</button></div>
+      </div>
+
+      <!-- VIDEO TAB -->
+      <div class="panel tabpane" id="pane-video" hidden>
+        <div class="video-grid">
+          <div class="stage-col">
+            <div class="stage" id="stage">
+              <video id="vid" playsinline preload="auto"></video>
+              <img id="stillImg" alt="" hidden>
+              <canvas id="ov"></canvas>
+              <div class="stage-tip" id="stageTip" hidden></div>
+            </div>
+            <div class="transport" id="transport">
+              <button class="icon-btn" id="playBtn" type="button" aria-label="Play">
+                <svg class="i-play" viewBox="0 0 20 20" width="18" height="18"><path d="M6 4.2v11.6l9.5-5.8z" fill="currentColor"/></svg>
+                <svg class="i-pause" viewBox="0 0 20 20" width="18" height="18"><path d="M6 4h3v12H6zM11 4h3v12h-3z" fill="currentColor"/></svg>
+              </button>
+              <div class="timeline" id="timeline" role="slider" tabindex="0" aria-label="Video position">
+                <canvas id="tlCanvas"></canvas>
+                <div class="playhead" id="playhead"></div>
+              </div>
+              <span class="clock" id="clock">0:00 / 0:00</span>
+              <select id="speed" aria-label="Playback speed"><option value="0.25">0.25×</option><option value="0.5">0.5×</option><option value="1" selected>1×</option><option value="2">2×</option></select>
+            </div>
+            <div class="stage-foot">
+              <div class="seg" id="viewSeg" role="group" aria-label="Which video to show">
+                <button type="button" data-view="live" class="on">Live view</button>
+                <button type="button" data-view="export">Exported video</button>
+              </div>
+              <div class="toggles" id="layers">
+                <label class="tog"><input type="checkbox" data-layer="arrows" checked><span>Arrows</span></label>
+                <label class="tog"><input type="checkbox" data-layer="ids" checked><span>Numbers</span></label>
+                <label class="tog"><input type="checkbox" data-layer="trail" checked><span>Motion trail</span></label>
+                <label class="tog" id="gridTog" hidden><input type="checkbox" data-layer="grid"><span>Grid</span></label>
+              </div>
+              <div class="legend">
+                <span><i class="dot s1"></i>Steady</span><span><i class="dot s2"></i>Fluttering</span><span><i class="dot s3"></i>Stalled</span>
+              </div>
+            </div>
+          </div>
+
+          <aside class="side-col">
+            <div class="cards" id="statCards"></div>
+            <div class="card tuftcard" id="tuftCard"></div>
+          </aside>
+        </div>
+      </div>
+
+      <!-- DATA TAB -->
+      <div class="panel tabpane" id="pane-data" hidden>
+        <div class="data-bar">
+          <div class="seg" id="dataSeg" role="group">
+            <button type="button" data-dv="tufts" class="on">Each tuft</button>
+            <button type="button" data-dv="history">Time history</button>
+          </div>
+          <input class="search" id="search" type="search" placeholder="Find a tuft number" aria-label="Find a tuft number">
+          <div class="seg" id="stateFilter" role="group" aria-label="Filter by flow">
+            <button type="button" data-f="all" class="on">All</button>
+            <button type="button" data-f="steady">Steady</button>
+            <button type="button" data-f="fluttering">Fluttering</button>
+            <button type="button" data-f="stalled">Stalled</button>
+          </div>
+          <span class="grow"></span>
+          <button class="btn" id="csvBtn" type="button">
+            <svg viewBox="0 0 20 20" width="16" height="16"><path d="M10 3.5v9M6.5 9L10 12.5 13.5 9M4 15.5h12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            Download CSV
+          </button>
+        </div>
+        <div class="table-wrap" id="tuftTableWrap">
+          <table class="grid" id="tuftTable"></table>
+        </div>
+        <div class="table-wrap" id="histWrap" hidden>
+          <table class="grid" id="histTable"></table>
+          <div class="pager"><button class="btn" id="hPrev" type="button">Previous</button><span id="hInfo" class="muted"></span><button class="btn" id="hNext" type="button">Next</button></div>
+        </div>
+        <p class="foot-note" id="dataNote"></p>
+      </div>
+
+      <!-- SETUP TAB -->
+      <div class="panel tabpane" id="pane-setup" hidden>
+        <div class="setup-grid">
+          <section class="card coord">
+            <h3>Coordinate system</h3>
+            <p class="muted">Tell TuftView where things are. Click points on the picture whose real position you know. Every tuft position and flow direction is then given in your axes and units.</p>
+            <div class="seg" id="coordMode" role="group">
+              <button type="button" data-m="two" class="on">Two points</button>
+              <button type="button" data-m="many">Several points</button>
+            </div>
+            <div class="coord-stage" id="coordStage">
+              <img id="coordImg" alt="First picture, click to place points">
+              <canvas id="coordCv"></canvas>
+            </div>
+            <p class="step-hint" id="coordHint"></p>
+          </section>
+
+          <div class="stack">
+            <section class="card">
+              <h4>Points</h4>
+              <div id="pointsBox"></div>
+              <div class="fields">
+                <label>Units
+                  <select id="unitSel"><option>mm</option><option>cm</option><option>m</option><option>in</option><option>ft</option></select>
+                </label>
+                <label id="yUpWrap" class="chk"><input type="checkbox" id="yUp" checked><span>Y points up from the X axis</span></label>
+                <label>Surface height (Z)
+                  <input type="number" step="any" id="zPlane" value="0">
+                </label>
+              </div>
+              <div class="row">
+                <button class="btn solid" id="applyCoord" type="button">Save coordinate system</button>
+                <button class="btn" id="clearCoord" type="button">Remove</button>
+              </div>
+              <p class="msg" id="coordMsg" role="status"></p>
+            </section>
+
+            <section class="card">
+              <h4>Tuft positions</h4>
+              <p class="muted">Positions are filled in automatically from the picture. To use your own measured X, Y, Z for a tuft, click it in the video, or edit it in the Data tab, or import a spreadsheet.</p>
+              <div class="row wrap">
+                <button class="btn" id="locDownload" type="button">Get template</button>
+                <label class="btn file">Import CSV<input type="file" id="locFile" accept=".csv,text/csv" hidden></label>
+                <button class="btn ghost" id="locClear" type="button">Clear mine</button>
+              </div>
+              <label class="chk lift"><input type="checkbox" id="liftOn"><span>Estimate Z direction from tuft shortening <em>(experimental)</em></span></label>
+              <p class="msg" id="locMsg" role="status"></p>
+            </section>
+
+            <section class="card">
+              <h4>Analysis settings</h4>
+              <div class="fields two">
+                <label>Tuft colour
+                  <select id="optPol"><option value="auto">Find automatically</option><option value="light">Light on dark</option><option value="dark">Dark on light</option></select>
+                </label>
+                <label>Tuft size
+                  <select id="optSize"><option value="auto">Automatic</option><option value="small">Small</option><option value="large">Large</option></select>
+                </label>
+                <label id="optStepWrap">Detail
+                  <select id="optStep"><option value="0">Automatic</option><option value="1">Every frame</option><option value="2">Every 2nd frame</option><option value="4">Every 4th frame</option></select>
+                </label>
+                <label>Detector
+                  <select id="optEngine"><option value="auto">Automatic</option><option value="classical">Classical</option><option value="unet">U-Net</option></select>
+                </label>
+              </div>
+              <div class="row wrap">
+                <button class="btn" id="roiBtn" type="button">Choose area</button>
+                <span class="muted" id="roiTxt">Whole picture</span>
+                <span class="grow"></span>
+                <button class="btn solid" id="reBtn" type="button">Analyze again</button>
+              </div>
+            </section>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+</div>
+
+<div class="dropveil" id="veil" hidden><div><svg viewBox="0 0 24 24" width="34" height="34"><path d="M12 16V5M7.5 9.5L12 5l4.5 4.5M5 16v2.5a1 1 0 001 1h12a1 1 0 001-1V16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg><p>Drop to analyze</p></div></div>
+<input type="file" id="fileIn" multiple accept="video/*,image/*,.mp4,.mov,.jpg,.jpeg,.png" hidden>
+<div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
+<dialog id="roiDlg" class="dlg">
+  <div class="dlg-head"><h3>Choose the area to analyze</h3><button class="icon-btn" id="roiClose" type="button" aria-label="Close"><svg viewBox="0 0 20 20" width="16" height="16"><path d="M5 5l10 10M15 5L5 15" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg></button></div>
+  <p class="muted">Drag a rectangle around the tufts. Everything outside is ignored.</p>
+  <div class="coord-stage"><img id="roiImg" alt=""><canvas id="roiCv"></canvas></div>
+  <div class="row"><button class="btn solid" id="roiOk" type="button">Use this area</button><button class="btn" id="roiAll" type="button">Whole picture</button></div>
+</dialog>
+<script src="/static/app.js"></script>
+</body>
+</html>

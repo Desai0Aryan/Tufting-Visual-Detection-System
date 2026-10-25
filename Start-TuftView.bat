@@ -1,7 +1,5 @@
 @echo off
 cd /d "%~dp0"
-if exist .venv-unet\Scripts\python.exe (set PY=.venv-unet\Scripts\python.exe) else if exist .venv\Scripts\python.exe (set PY=.venv\Scripts\python.exe) else (set PY=py -3)
-%PY% -m pip install -q -r Requirements.txt -r Requirements-dashboard.txt
-if errorlevel 1 (echo Install failed. Is Python 3 installed? & pause & exit /b 1)
-%PY% -m dashboard
+where py >nul 2>nul && (set PY=py -3) || (where python >nul 2>nul && (set PY=python) || (echo Python 3 is not installed. Get it from python.org, then double-click this again. & pause & exit /b 1))
+%PY% launch.py
 pause

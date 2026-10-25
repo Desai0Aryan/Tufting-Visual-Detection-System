@@ -237,6 +237,7 @@ async function openJob(id, refresh = false, fromRoute = false) {
   buildDownloads(j);
   showTab(G.tab, true);
 }
+function un0(s) { return !!s.unet; }
 function warnHtml(lines, fix, classic) {
   const ico = `<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3 2.5 20h19L12 3z"/><path d="M12 10v4.5M12 17.6v.1"/></svg>`;
   const title = classic ? "Trained model not in use" : "Heads up";
@@ -247,11 +248,8 @@ function renderChips(j) {
   const c = [];
   if (j.kind === "video") c.push(`<span class="chip"><b>${clock(j.info.duration)}</b> video</span>`);
   c.push(`<span class="chip"><b>${j.info.width}×${j.info.height}</b></span>`);
-  if (j.status === "done") { c.push(`<span class="chip"><b>${j.tufts}</b> tufts</span>`); if (j.stats && j.stats.engine) c.push(`<span class="chip">${esc(j.stats.engine.replace(/\s*\([^)]*\)/, "").replace(/, tuft map.*/, ""))}</span>`); }
+  if (j.status === "done") { c.push(`<span class="chip"><b>${j.tufts}</b> tufts</span>`); if (j.stats && j.stats.engine) { const un = /U-Net/.test(j.stats.engine), tip = ((j.stats.warnings || []).join(" ")); c.push(`<span class="chip det ${un ? "on" : ""}" title="${esc(tip)}">${un ? "Trained U-Net" : "Classical detector"}</span>`); } }
   $("#runChips").innerHTML = c.join("");
-  const w = (j.stats && j.stats.warnings) || [];
-  const bw = $("#runWarn"); bw.hidden = !w.length;
-  bw.innerHTML = w.length ? warnHtml(w.length > 1 ? w.slice(0, -1).concat([]) : w, (G.status && G.status.fix) || "", w.some(x => /trained model|PyTorch/i.test(x))) : "";
 }
 async function loadResults(j) {
   const [res, ov, sm, st] = await Promise.all([api(`/jobs/${j.id}/results.json`), api(`/jobs/${j.id}/overview.json`), api(`/jobs/${j.id}/summary.json`), api(`/jobs/${j.id}/setup`)]);
@@ -802,8 +800,10 @@ async function pollOnce() { const list = await api("/jobs"); G.jobs = list; rend
 
 /* ---------------------------------------------------------------- start */
 (async function init() {
-  try { const s = await api("/status"); G.status = s; $("#engineNote").textContent = (s.warning ? "Trained model not found · using classic detector" : s.engine);
-    const hw = $("#homeWarn"); hw.hidden = !s.warning; hw.innerHTML = s.warning ? warnHtml([s.warning], s.fix, true) : ""; } catch (_) {}
+  try { const s = await api("/status"); G.status = s; $("#engineNote").textContent = (un0(s) ? "Detector: Trained U-Net" : "Detector: Classical");
+    const dp = $("#detPill"), un = !!s.unet; dp.hidden = false; dp.className = "det-pill" + (un ? " on" : "");
+    dp.title = s.warning ? s.warning + " " + (s.fix || "") : "Trained model: " + (s.weights || "");
+    dp.innerHTML = `<i></i>Detector: <b>${un ? "Trained U-Net" : "Classical"}</b>`; } catch (_) {}
   try { G.jobs = await api("/jobs"); } catch (_) {}
   renderRail(); route(); pollJobs();
 })();

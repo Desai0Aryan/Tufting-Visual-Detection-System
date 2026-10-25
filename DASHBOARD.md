@@ -46,6 +46,14 @@ Flow state per tuft (steady / fluttering / stalled, from the existing stall anal
 timeline, direction-over-time chart, world grid overlay, coordinate axes in the exported video,
 area-of-interest picker, Excel workbook, ZIP of everything, saved history of analyses.
 
+## Starting it (nothing to install by hand)
+
+Double-click `Start-TuftView.command` (Mac) or `Start-TuftView.bat` (Windows). Both run `launch.py`, which on the
+first start (internet needed once) creates a private `.venv/`, installs the dashboard, and installs what the trained
+U-Net needs to run (`Requirements-model.txt`: PyTorch etc.; the NVIDIA CUDA build when an NVIDIA GPU is found).
+Later starts go straight to the dashboard. If a requirements file changes, the next start updates the environment.
+The only thing still needed is Python 3.10+ on the computer and the model file at `models/tuft_unet.pt`.
+
 ## Detector choice: the trained U-Net is the default
 
 Videos run the same pipeline as `python -m tools.process_video`, without its pop-up windows:

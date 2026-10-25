@@ -337,3 +337,12 @@ table.grid { width: 100%; border-collapse: separate; border-spacing: 0; font-siz
 @media (max-width: 640px) { .banner.warn .wp { display: none; } }
 @media (prefers-reduced-motion: reduce) { .banner.warn .wi { animation: none; } }
 #homeWarn { margin-top: 18px; max-width: 720px; }
+
+/* detector pill (replaces the warning callout) */
+.det-pill { display: inline-flex; align-items: center; gap: 8px; margin-top: 16px; padding: 6px 12px; border-radius: 999px; font-size: 13px; color: var(--ink-3);
+  background: var(--surface); border: 1px solid var(--line); position: relative; z-index: 0; }
+.det-pill b { color: var(--ink); } .det-pill[hidden] { display: none; }
+.det-pill i { width: 8px; height: 8px; border-radius: 50%; background: #9aa6b2; }
+.det-pill.on i { background: #22c55e; box-shadow: 0 0 0 4px rgba(34,197,94,.18); }
+.chip.det.on { color: #15803d; }
+.det-wrap { margin-bottom: 14px; } .det-wrap .det-pill { margin-top: 0; }

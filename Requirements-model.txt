@@ -1,0 +1,9 @@
+# What the trained U-Net needs just to RUN (no training). Installed automatically by launch.py.
+# torch / torchvision come from the NVIDIA CUDA 12.8 index when an NVIDIA GPU is found, else from PyPI
+# (Mac: Apple GPU support is included; otherwise CPU). Training extras stay in Requirements-train.txt.
+torch>=2.5
+torchvision>=0.20
+segmentation-models-pytorch==0.5.0
+timm>=1.0
+safetensors>=0.4
+huggingface_hub>=0.25

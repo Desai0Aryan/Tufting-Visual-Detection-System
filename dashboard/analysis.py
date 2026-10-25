@@ -97,7 +97,7 @@ def find_weights(explicit=""):
 
 def _fix_for(why):
     if "PyTorch" in why:
-        return "Install PyTorch (pip install -r Requirements-train.txt), then analyze again."
+        return "Close TuftView and open it with Start-TuftView again; it installs PyTorch automatically."
     if "not found:" in why:
         return "Check the path in Setup > Model file, then analyze again."
     return "Copy the model file to models/tuft_unet.pt (or finish a training run), then analyze again."

@@ -94,7 +94,7 @@ def create_app(data_dir=None):
     @app.get("/api/status")
     def status():
         st = analysis.engine_status(_safe_opts())
-        return jsonify(version=__version__, engine=st["note"], unet=st["engine"] == "unet", warning=st["warning"],
+        return jsonify(version=__version__, engine=st["note"], unet=st["engine"] == "unet", warning=st["warning"], fix=st.get("fix", ""),
                        weights=st["weights"], maps=unet_video.library_names(),
                        ffmpeg=bool(__import__("dashboard.media", fromlist=["x"]).ffmpeg_exe()))
 

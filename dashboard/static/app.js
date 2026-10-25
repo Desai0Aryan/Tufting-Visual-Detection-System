@@ -237,6 +237,12 @@ async function openJob(id, refresh = false, fromRoute = false) {
   buildDownloads(j);
   showTab(G.tab, true);
 }
+function warnHtml(lines, fix, classic) {
+  const ico = `<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3 2.5 20h19L12 3z"/><path d="M12 10v4.5M12 17.6v.1"/></svg>`;
+  const title = classic ? "Trained model not in use" : "Heads up";
+  return `<span class="wi">${ico}</span><span class="wb"><b>${title}</b>${lines.map(l => `<span>${esc(l)}</span>`).join("")}` +
+    (fix ? `<em>${esc(fix)}</em>` : "") + `</span>` + (classic ? `<span class="wp">Classic detector</span>` : "");
+}
 function renderChips(j) {
   const c = [];
   if (j.kind === "video") c.push(`<span class="chip"><b>${clock(j.info.duration)}</b> video</span>`);
@@ -244,7 +250,8 @@ function renderChips(j) {
   if (j.status === "done") { c.push(`<span class="chip"><b>${j.tufts}</b> tufts</span>`); if (j.stats && j.stats.engine) c.push(`<span class="chip">${esc(j.stats.engine.replace(/\s*\([^)]*\)/, "").replace(/, tuft map.*/, ""))}</span>`); }
   $("#runChips").innerHTML = c.join("");
   const w = (j.stats && j.stats.warnings) || [];
-  const bw = $("#runWarn"); bw.hidden = !w.length; bw.innerHTML = w.map(esc).join("<br>");
+  const bw = $("#runWarn"); bw.hidden = !w.length;
+  bw.innerHTML = w.length ? warnHtml(w.length > 1 ? w.slice(0, -1).concat([]) : w, (G.status && G.status.fix) || "", w.some(x => /trained model|PyTorch/i.test(x))) : "";
 }
 async function loadResults(j) {
   const [res, ov, sm, st] = await Promise.all([api(`/jobs/${j.id}/results.json`), api(`/jobs/${j.id}/overview.json`), api(`/jobs/${j.id}/summary.json`), api(`/jobs/${j.id}/setup`)]);
@@ -795,8 +802,8 @@ async function pollOnce() { const list = await api("/jobs"); G.jobs = list; rend
 
 /* ---------------------------------------------------------------- start */
 (async function init() {
-  try { const s = await api("/status"); G.status = s; $("#engineNote").textContent = s.engine + (s.warning ? " — not available" : "");
-    const hw = $("#homeWarn"); hw.hidden = !s.warning; hw.textContent = s.warning ? "The trained model is not being used: " + s.warning + " Until then the less accurate classic detector runs." : ""; } catch (_) {}
+  try { const s = await api("/status"); G.status = s; $("#engineNote").textContent = (s.warning ? "Trained model not found · using classic detector" : s.engine);
+    const hw = $("#homeWarn"); hw.hidden = !s.warning; hw.innerHTML = s.warning ? warnHtml([s.warning], s.fix, true) : ""; } catch (_) {}
   try { G.jobs = await api("/jobs"); } catch (_) {}
   renderRail(); route(); pollJobs();
 })();

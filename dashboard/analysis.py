@@ -95,6 +95,14 @@ def find_weights(explicit=""):
     return ""
 
 
+def _fix_for(why):
+    if "PyTorch" in why:
+        return "Install PyTorch (pip install -r Requirements-train.txt), then analyze again."
+    if "not found:" in why:
+        return "Check the path in Setup > Model file, then analyze again."
+    return "Copy the model file to models/tuft_unet.pt (or finish a training run), then analyze again."
+
+
 def engine_status(opts=None):
     """What would run right now: {engine, weights, note, warning}. `warning` is set when the trained model
     could not be used and the less accurate classical detector takes over (the dashboard shows it)."""
@@ -106,13 +114,13 @@ def engine_status(opts=None):
     if opts.weights and not Path(opts.weights).is_file():
         why = f"The model file you entered was not found: {opts.weights}"
     elif not w:
-        why = "No trained model found. Put it at models/tuft_unet.pt or finish a training run (runs/<name>/checkpoints/best.pt), then analyze again."
+        why = "No trained model found."
     elif not torch_available():
-        why = "PyTorch is not installed in this Python, so the trained model cannot run. Install Requirements-train.txt."
+        why = "PyTorch is not installed, so the trained model cannot run."
     if why:
         if opts.engine == "unet":
             raise ValueError(why)
-        return {"engine": "classical", "weights": "", "note": "Classical detector", "warning": why}
+        return {"engine": "classical", "weights": "", "note": "Classical detector", "warning": why, "fix": _fix_for(why)}
     return {"engine": "unet", "weights": w, "note": f"U-Net ({Path(w).name})", "warning": ""}
 
 

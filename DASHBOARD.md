@@ -17,12 +17,19 @@ network open it; `--port`, `--data DIR` and `--no-browser` are also available.
 ## What the customer does
 
 1. Drag a video or pictures onto the page, or press the **+** button. (**Try a sample clip** makes a made-up wind tunnel video.)
-2. Wait for the progress ring. The picture shows what is being found live.
-3. **Video** tab: watch the result. Click any tuft to see its position, direction, steadiness and a
+2. Wait while the trained model finds the tufts (for a video: the tuft map, ~60 frames scanned).
+3. **The pop-up opens** with the first picture and every tuft that was found. Pick **Add tufts** and click a missed tuft's
+   taped end, or **Remove tufts** and click a wrong dot (or drag a box around many). Scroll to zoom, right-drag to move,
+   `A` / `R` switch tool, `Z` undoes. **Flip flow direction** if the big arrow points the wrong way. For a picture, drag from a
+   missed tuft's taped end to its free end to add it with the right direction. Choose **Frames to process**
+   (default: every frame), optionally name the map to reuse it, then press **Process all frames**.
+   *Not now* closes the pop-up and keeps the file waiting (press **Check tufts** to reopen it).
+4. Wait for the progress ring: every frame is measured against your corrected map, and the annotated video is made.
+5. **Video** tab: watch the result. Click any tuft to see its position, direction, steadiness and a
    direction-over-time chart. Type your own X, Y, Z for it if you measured it.
-4. **Data** tab: one line per tuft (sort, search, filter by flow), or the full time history. Click a
+6. **Data** tab: one line per tuft (sort, search, filter by flow), or the full time history. Click a
    grey number to type your own. **Download** gives CSV, Excel, the annotated video, or everything as one ZIP.
-5. **Setup** tab: define the coordinate system, import positions, change detection settings.
+7. **Setup** tab: define the coordinate system, import positions, change detection settings.
 
 ## Requirement map
 
@@ -75,6 +82,19 @@ Setup tab:
   "Apply and analyze again". "Save map for other videos" stores it under a name; pick it under **Tuft map** on any
   other video of the same aircraft and camera mount so tuft numbers stay the same.
 - Pictures use the U-Net directly (no map).
+
+## The check-the-tufts pop-up (what changed)
+
+Same as `python -m tools.process_video`, but in the browser instead of an OpenCV window: build the tuft map, let the
+person fix it, then process every frame. Only `dashboard/` changed; `src/`, `core/`, `tools/` and `app/` are untouched.
+
+- Upload creates the job with `review=1` (the default; send `review=0` with the upload to skip the pop-up and analyze straight away).
+- Video with the trained model + "Fixed on the surface": `unet_video.MapRunner(build_only=True)` stops after the map exists, the job
+  gets status `review`, the pop-up edits it through `PUT /api/jobs/<id>/map` (add / remove / flip), then
+  `POST /api/jobs/<id>/reanalyze {"map_mode": "keep", "review": false, "step": 1}` processes all frames.
+- Pictures: detections are saved to `image_tufts.json`, edited through `PUT /api/jobs/<id>/image_tufts`, and `map_mode: "keep"` writes the result from them.
+- Classical detector or "Camera moves": there is no tuft map to check, so these run straight through as before.
+- Setup > Analyze again opens the pop-up again; Setup > Tuft map > Apply and analyze again does not.
 
 ## Tests
 

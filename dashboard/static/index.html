@@ -103,6 +103,16 @@
         </div>
       </div>
 
+      <!-- waiting for the person to check the tufts (the pop-up is closed) -->
+      <div class="panel reviewing" id="reviewPanel" hidden>
+        <div class="work-stage"><img id="reviewThumb" alt="First picture"></div>
+        <div class="work-side">
+          <h3>Your tufts are ready to check</h3>
+          <p class="muted" id="reviewPanelTxt">Remove wrong ones and add missed ones, then process.</p>
+          <div class="row"><button class="btn solid" id="reviewOpen" type="button">Check tufts</button><button class="btn" id="reviewDel" type="button">Remove</button></div>
+        </div>
+      </div>
+
       <!-- failed -->
       <div class="panel failed" id="failed" hidden>
         <h3>This one didn’t finish</h3>
@@ -294,6 +304,41 @@
 <div class="dropveil" id="veil" hidden><div><svg viewBox="0 0 24 24" width="34" height="34"><path d="M12 16V5M7.5 9.5L12 5l4.5 4.5M5 16v2.5a1 1 0 001 1h12a1 1 0 001-1V16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg><p>Drop to analyze</p></div></div>
 <input type="file" id="fileIn" multiple accept="video/*,image/*,.mp4,.mov,.jpg,.jpeg,.png" hidden>
 <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
+<dialog id="reviewDlg" class="dlg review-dlg" aria-labelledby="rvTitle">
+  <div class="dlg-head">
+    <div><h3 id="rvTitle">Check the tufts</h3><p class="muted small" id="rvSub"></p></div>
+    <button class="icon-btn" id="rvClose" type="button" aria-label="Close"><svg viewBox="0 0 20 20" width="16" height="16"><path d="M5 5l10 10M15 5L5 15" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg></button>
+  </div>
+  <div class="rv-bar">
+    <div class="seg" id="rvMode" role="group" aria-label="What a click does">
+      <button type="button" data-mode="add" class="on"><i class="k add"></i>Add tufts</button>
+      <button type="button" data-mode="remove"><i class="k rem"></i>Remove tufts</button>
+    </div>
+    <button class="btn" id="rvUndo" type="button" disabled>Undo</button>
+    <button class="btn" id="rvFlip" type="button" hidden>Flip flow direction</button>
+    <span class="grow"></span>
+    <span class="rv-count" id="rvCount"></span>
+    <div class="rv-zoom" role="group" aria-label="Zoom">
+      <button class="icon-btn" id="rvOut" type="button" aria-label="Zoom out">−</button>
+      <button class="icon-btn" id="rvFit" type="button" aria-label="Fit to window">⤢</button>
+      <button class="icon-btn" id="rvIn" type="button" aria-label="Zoom in">+</button>
+    </div>
+  </div>
+  <div class="rv-stage" id="rvStage"><canvas id="rvCv"></canvas></div>
+  <p class="rv-hint" id="rvHint"></p>
+  <div class="rv-foot">
+    <label class="rv-field">Frames to process
+      <select id="rvStep"><option value="1">Every frame (most detail)</option><option value="2">Every 2nd frame</option><option value="4">Every 4th frame</option><option value="0">Automatic (faster on long videos)</option></select>
+    </label>
+    <label class="rv-field" id="rvNameWrap">Save this map for other videos <span class="muted">(optional)</span>
+      <input id="rvName" type="text" maxlength="60" placeholder="e.g. Wing camera 1">
+    </label>
+    <span class="grow"></span>
+    <span class="msg rv-msg" id="rvMsg" role="status"></span>
+    <button class="btn" id="rvLater" type="button">Not now</button>
+    <button class="btn solid" id="rvGo" type="button">Process all frames</button>
+  </div>
+</dialog>
 <dialog id="roiDlg" class="dlg">
   <div class="dlg-head"><h3>Choose the area to analyze</h3><button class="icon-btn" id="roiClose" type="button" aria-label="Close"><svg viewBox="0 0 20 20" width="16" height="16"><path d="M5 5l10 10M15 5L5 15" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg></button></div>
   <p class="muted">Drag a rectangle around the tufts. Everything outside is ignored.</p>

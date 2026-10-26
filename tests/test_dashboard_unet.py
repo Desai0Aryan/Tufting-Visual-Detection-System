@@ -9,6 +9,8 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
+import io
+
 import cv2
 import numpy as np
 
@@ -33,11 +35,11 @@ class FakeUNet:
         return MaskResult(tuft=(self.predict_proba(image)[0] >= self.threshold).astype(np.uint8) * 255)
 
 
-def _wait(c, jid, timeout=180):
+def _wait(c, jid, timeout=180, also=()):
     t0 = time.time()
     while time.time() - t0 < timeout:
         m = c.get(f"/api/jobs/{jid}").json
-        if m["status"] not in ("queued", "running"):
+        if m["status"] not in ("queued", "running") or m["status"] in also:
             return m
         time.sleep(0.3)
     raise TimeoutError
@@ -62,7 +64,7 @@ class UNetPathTests(unittest.TestCase):
         cls.app = create_app(str(t / "data"))
         cls.c = cls.app.test_client()
         with open(cls.clip, "rb") as fh:
-            r = cls.c.post("/api/upload", data={"files": (fh, "clip.mp4")}, content_type="multipart/form-data")
+            r = cls.c.post("/api/upload", data={"files": (fh, "clip.mp4"), "review": "0"}, content_type="multipart/form-data")
         cls.jid = r.json["jobs"][0]["id"]
         cls.meta = _wait(cls.c, cls.jid)
 
@@ -123,6 +125,93 @@ class UNetPathTests(unittest.TestCase):
         m = _wait(self.c, self.jid)
         self.assertEqual(m["status"], "done", m.get("error"))
         self.assertEqual(m["stats"]["tracking"], "free")
+
+
+class ReviewPopupTests(unittest.TestCase):
+    """Upload -> tufts found -> pop-up (add / remove) -> process every frame."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.tmp = tempfile.TemporaryDirectory()
+        t = Path(cls.tmp.name)
+        w = t / "fake.pt"
+        w.write_bytes(b"x")
+        cls.patches = [
+            mock.patch.dict(sys.modules, {"src.unet": types.SimpleNamespace(UNetBackend=FakeUNet)}),
+            mock.patch.object(analysis, "torch_available", lambda: True),
+            mock.patch.dict("os.environ", {"TUFT_WEIGHTS": str(w)}),
+        ]
+        for p in cls.patches:
+            p.start()
+        cls.clip = str(t / "clip.mp4")
+        make_demo_video(cls.clip, seconds=2.0, fps=12, size=(960, 540))
+        cls.c = create_app(str(t / "data")).test_client()
+
+    @classmethod
+    def tearDownClass(cls):
+        for p in cls.patches:
+            p.stop()
+        cls.tmp.cleanup()
+
+    def _upload(self):
+        with open(self.clip, "rb") as fh:
+            r = self.c.post("/api/upload", data={"files": (fh, "clip.mp4")}, content_type="multipart/form-data")
+        return r.json["jobs"][0]["id"]
+
+    def test_video_waits_for_the_popup_then_processes_every_frame(self):
+        jid = self._upload()
+        m = _wait(self.c, jid, also=("review",))
+        self.assertEqual(m["status"], "review", m.get("error"))
+        self.assertEqual(m["review_kind"], "map")
+        self.assertGreater(m["tufts"], 5)
+        # nothing was processed yet
+        self.assertEqual(self.c.get(f"/api/jobs/{jid}/results.json").status_code, 409)
+        mp = self.c.get(f"/api/jobs/{jid}/map").json["map"]
+        n = len(mp["anchors"])
+        self.assertIn("length", mp["anchors"][0])
+        self.assertGreater(mp["median_length"], 0)
+        # the person removes two tufts and adds one
+        gone = [a["id"] for a in mp["anchors"][:2]]
+        r = self.c.put(f"/api/jobs/{jid}/map", json={"remove": gone, "add": [[40, 40]]})
+        self.assertEqual(len(r.json["map"]["anchors"]), n - 1)
+        r = self.c.post(f"/api/jobs/{jid}/reanalyze", json={"map_mode": "keep", "review": False, "tracking": "map", "step": 1})
+        self.assertEqual(r.status_code, 200, r.json)
+        m = _wait(self.c, jid)
+        self.assertEqual(m["status"], "done", m.get("error"))
+        self.assertEqual(m["stats"]["step"], 1)
+        self.assertEqual(m["stats"]["frames"], m["info"]["frames"])          # every frame
+        self.assertIn("reviewed", m["stats"]["engine"])
+        self.assertLessEqual(m["stats"]["tufts_total"], n - 1 + 1)
+
+    def test_closing_the_popup_keeps_the_job_waiting(self):
+        jid = self._upload()
+        self.assertEqual(_wait(self.c, jid, also=("review",))["status"], "review")
+        self.assertEqual(self.c.get(f"/api/jobs/{jid}/map").status_code, 200)    # can be reopened
+        self.assertEqual(self.c.delete(f"/api/jobs/{jid}").status_code, 200)
+
+    def test_picture_popup_remove_and_add(self):
+        img = np.full((300, 400, 3), 225, np.uint8)
+        for k in range(6):
+            x, y = 40 + 55 * k, 150
+            cv2.line(img, (x, y), (x + 8, y - 36), (30, 30, 30), 3)
+        ok, buf = cv2.imencode(".png", img)
+        r = self.c.post("/api/upload", data={"files": (io.BytesIO(buf.tobytes()), "pic.png")}, content_type="multipart/form-data")
+        jid = r.json["jobs"][0]["id"]
+        m = _wait(self.c, jid, also=("review",))
+        self.assertEqual(m["status"], "review", m.get("error"))
+        self.assertEqual(m["review_kind"], "image")
+        d = self.c.get(f"/api/jobs/{jid}/image_tufts").json
+        n = len(d["tufts"])
+        self.assertGreater(n, 2)
+        r = self.c.put(f"/api/jobs/{jid}/image_tufts", json={"remove": [0], "add": [[200, 250], {"root": [20, 250], "tip": [20, 210]}]})
+        self.assertEqual(r.json["count"], n + 1)
+        self.c.post(f"/api/jobs/{jid}/reanalyze", json={"map_mode": "keep", "review": False})
+        m = _wait(self.c, jid)
+        self.assertEqual(m["status"], "done", m.get("error"))
+        self.assertEqual(m["stats"]["tufts_total"], n + 1)
+        self.assertEqual(self.c.get(f"/api/jobs/{jid}/media").status_code, 200)
+        tufts = self.c.get(f"/api/jobs/{jid}/summary.json").json["rows"]
+        self.assertEqual(len(tufts), n + 1)
 
 
 class FallbackTests(unittest.TestCase):

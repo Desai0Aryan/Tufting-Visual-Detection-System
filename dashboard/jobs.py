@@ -16,7 +16,7 @@ from pathlib import Path
 import cv2
 
 from . import analysis
-from .analysis import Cancelled, Options
+from .analysis import Cancelled, Options, ReviewNeeded
 
 VIDEO_EXT = {".mp4", ".m4v", ".mov", ".avi", ".mkv", ".webm"}
 IMAGE_EXT = {".jpg", ".jpeg", ".png", ".bmp", ".webp", ".tif", ".tiff", ".avif", ".heic"}
@@ -193,6 +193,11 @@ class JobStore:
         try:
             fn = analysis.analyze_video if m["kind"] == "video" else analysis.analyze_image
             stats = fn(src, d, opts, progress, cancelled)
+        except ReviewNeeded as r:
+            if jid in self.meta:
+                self.update(jid, status="review", progress=0.0, eta=None, tufts=r.count, review_kind=r.kind,
+                            message="Check the tufts, then process all frames")
+            return
         except Cancelled:
             self.cancel.discard(jid)
             if jid in self.meta:

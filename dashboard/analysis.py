@@ -33,6 +33,15 @@ class Cancelled(Exception):
     pass
 
 
+class ReviewNeeded(Exception):
+    """Raised after the first stage (tuft map / picture detections) so the person can check the tufts in the
+    pop-up before every frame is processed. `kind` is "map" (video) or "image"; `count` the tufts proposed."""
+
+    def __init__(self, kind, count):
+        super().__init__(f"{count} tufts are waiting to be checked")
+        self.kind, self.count = kind, int(count)
+
+
 @dataclass
 class Options:
     engine: str = "auto"        # auto / classical / unet
@@ -44,6 +53,7 @@ class Options:
     tracking: str = "map"       # map = camera fixed on the surface (tuft map, most accurate); free = any camera
     map_mode: str = "build"     # build a tuft map from the video, or keep the one already saved for this analysis
     map_name: str = ""          # a tuft map saved earlier for the same aircraft / camera mount
+    review: bool = False        # stop after finding the tufts so the person can add / remove them in the pop-up
 
     @classmethod
     def from_dict(cls, d):
@@ -59,6 +69,7 @@ class Options:
             o.tracking = "map"
         if o.map_mode not in ("build", "keep"):
             o.map_mode = "build"
+        o.review = bool(o.review)
         o.weights = str(o.weights or "").strip().strip('"')
         o.map_name = "".join(ch for ch in str(o.map_name or "") if ch.isalnum() or ch in "-_ .")[:60].strip()
         try:
@@ -242,7 +253,11 @@ def analyze_video(src, out_dir, opts: Options, progress: Callable, cancelled: Ca
     polarity = "light"
     if engine == "unet" and opts.tracking == "map":
         from . import unet_video
-        runner = unet_video.MapRunner(src, out_dir, opts, weights, fps / step, progress, cancelled)
+        stop_at_map = opts.review and opts.map_mode != "keep"
+        runner = unet_video.MapRunner(src, out_dir, opts, weights, fps / step, progress, cancelled,
+                                      build_only=stop_at_map)
+        if stop_at_map:
+            raise ReviewNeeded("map", len(runner.map.anchors))
         note = runner.note
         warnings += runner.warnings
         if roi is not None:
@@ -314,11 +329,94 @@ def analyze_video(src, out_dir, opts: Options, progress: Callable, cancelled: Ca
             "seconds": time.time() - t0, "engine": note, "step": step, "browser_video": writer.browser_ok}
 
 
-# ---------------------------------------------------------------- image
-def analyze_image(src, out_dir, opts: Options, progress: Callable, cancelled: Callable):
-    """Same detector on one still picture (the pipeline main.py uses for --image)."""
+# ---------------------------------------------------------------- pictures: detect, then (optionally) let the person edit
+IMAGE_TUFTS = "image_tufts.json"
+
+
+def _detect_image(img, opts, roi, engine, weights, note):
+    """The same detector call as before. -> (list of {root, tip, conf}, polarity, note)."""
     from detector import TuftDetector
     from src.backends import build_backend
+    h, w = img.shape[:2]
+
+    def run(backend):
+        p = classical_params(w, h, opts)
+        if engine == "unet":
+            p.update(min_area=10, max_area=1e7, min_length_px=10, max_length_px=5000)
+        det = TuftDetector(min_area=p["min_area"], max_area=p["max_area"], min_elongation=p["min_elongation"],
+                           min_length_px=p["min_length_px"], max_length_px=p["max_length_px"],
+                           backend=backend, roi=roi)
+        return det.detect(img)
+
+    polarity = None
+    if engine == "unet":
+        found = run(build_backend("unet", weights=weights, threshold=None))
+    else:
+        p = classical_params(w, h, opts)
+        pols = ("light", "dark") if opts.polarity == "auto" else (opts.polarity,)
+        runs = []
+        for pol in pols:
+            be = build_backend("classical", block_size=p["block_size"], c=p["c"], clahe_clip=3.0,
+                               clahe_tile=8, polarity=pol)
+            runs.append((pol, run(be)))
+        polarity, found = max(runs, key=lambda r: len(r[1]))
+        note += f", {polarity} tufts"
+    return [{"root": [float(t.root[0]), float(t.root[1])], "tip": [float(t.tip[0]), float(t.tip[1])],
+             "vec": [float(t.vector[0]), float(t.vector[1])], "angle": float(t.angle_deg),
+             "length": float(t.length_px), "conf": float(t.confidence)} for t in found], polarity, note
+
+
+def save_image_tufts(out_dir, tufts):
+    p = Path(out_dir) / IMAGE_TUFTS
+    tmp = p.with_suffix(".tmp")
+    tmp.write_text(json.dumps({"tufts": tufts}), "utf8")
+    tmp.replace(p)
+
+
+def load_image_tufts(out_dir):
+    return json.loads((Path(out_dir) / IMAGE_TUFTS).read_text("utf8"))["tufts"]
+
+
+def image_rec(i, t):
+    """Raw record for one picture tuft ({root, tip, conf}); the angle is the math angle, y flipped, as in Tuft."""
+    (rx, ry), (tx, ty) = t["root"], t["tip"]
+    dx, dy = tx - rx, ty - ry
+    n = math.hypot(dx, dy) or 1.0
+    vec = t.get("vec") or [dx / n, dy / n]                       # detected tufts keep the detector's tip direction
+    ang = t["angle"] if "angle" in t else math.degrees(math.atan2(-vec[1], vec[0]))
+    length = t.get("length") or n
+    return [i, _round(rx), _round(ry), _round(tx), _round(ty), _round(vec[0], 4), _round(vec[1], 4),
+            _round(ang, 2), _round(length), 1.0, 0, _round(t.get("conf", 1.0), 2)]
+
+
+def edit_image_tufts(out_dir, remove=(), add=()):
+    """Apply the pop-up's edits to the detected picture tufts and save. `add` items are {root, tip} or [x, y]
+    (a click: it gets the typical length and direction of the tufts found). -> the new list."""
+    tufts = load_image_tufts(out_dir)
+    gone = {int(i) for i in remove}
+    tufts = [t for k, t in enumerate(tufts) if k not in gone]
+    lens = [math.dist(t["root"], t["tip"]) for t in tufts]
+    typ_len = float(np.median(lens)) if lens else 40.0
+    vx = float(np.mean([t["tip"][0] - t["root"][0] for t in tufts])) if tufts else typ_len
+    vy = float(np.mean([t["tip"][1] - t["root"][1] for t in tufts])) if tufts else 0.0
+    vn = math.hypot(vx, vy) or 1.0
+    for a in add:
+        if isinstance(a, dict):
+            root, tip = [float(v) for v in a["root"]], [float(v) for v in a["tip"]]
+            if math.dist(root, tip) < 3:
+                continue
+        else:
+            root = [float(a[0]), float(a[1])]
+            tip = [root[0] + vx / vn * typ_len, root[1] + vy / vn * typ_len]
+        tufts.append({"root": root, "tip": tip, "conf": 1.0, "manual": True})
+    save_image_tufts(out_dir, tufts)
+    return tufts
+
+
+# ---------------------------------------------------------------- image
+def analyze_image(src, out_dir, opts: Options, progress: Callable, cancelled: Callable):
+    """Same detector on one still picture (the pipeline main.py uses for --image).
+    With opts.review it stops after detecting so the person can add / remove tufts (see edit_image_tufts)."""
     out_dir = Path(out_dir)
     data = np.fromfile(str(src), dtype=np.uint8)
     img = cv2.imdecode(data, cv2.IMREAD_COLOR)
@@ -334,37 +432,22 @@ def analyze_image(src, out_dir, opts: Options, progress: Callable, cancelled: Ca
     engine, weights, note = status["engine"], status["weights"], status["note"]
     t0 = time.time()
     progress(done=0, total=1, tufts=0, eta=None, fps=0, preview=img)
-
-    def run(backend):
-        p = classical_params(w, h, opts)
-        if engine == "unet":
-            p.update(min_area=10, max_area=1e7, min_length_px=10, max_length_px=5000)
-        det = TuftDetector(min_area=p["min_area"], max_area=p["max_area"], min_elongation=p["min_elongation"],
-                           min_length_px=p["min_length_px"], max_length_px=p["max_length_px"],
-                           backend=backend, roi=roi)
-        return det.detect(img)
-
     polarity = None
-    if engine == "unet":
-        tufts = run(build_backend("unet", weights=weights, threshold=None))
+    reviewed = Path(out_dir) / IMAGE_TUFTS
+    if opts.map_mode == "keep" and reviewed.is_file():       # the person already checked the tufts in the pop-up
+        tufts = load_image_tufts(out_dir)
+        note += ", tufts checked by you"
     else:
-        p = classical_params(w, h, opts)
-        pols = ("light", "dark") if opts.polarity == "auto" else (opts.polarity,)
-        runs = []
-        for pol in pols:
-            be = build_backend("classical", block_size=p["block_size"], c=p["c"], clahe_clip=3.0,
-                               clahe_tile=8, polarity=pol)
-            runs.append((pol, run(be)))
-        polarity, tufts = max(runs, key=lambda r: len(r[1]))
-        note += f", {polarity} tufts"
+        tufts, polarity, note = _detect_image(img, opts, roi, engine, weights, note)
+        if cancelled():
+            raise Cancelled()
+        if opts.review:
+            save_image_tufts(out_dir, tufts)
+            raise ReviewNeeded("image", len(tufts))
     if cancelled():
         raise Cancelled()
 
-    recs = []
-    for i, t in enumerate(tufts):
-        recs.append([i, _round(t.root[0]), _round(t.root[1]), _round(t.tip[0]), _round(t.tip[1]),
-                     _round(t.vector[0], 4), _round(t.vector[1], 4), _round(t.angle_deg, 2),
-                     _round(t.length_px), 1.0, 0, _round(t.confidence, 2)])
+    recs = [image_rec(i, t) for i, t in enumerate(tufts)]
     ann = draw_records(img, recs)
     cv2.imencode(".jpg", ann, [cv2.IMWRITE_JPEG_QUALITY, 93])[1].tofile(str(out_dir / "annotated.jpg"))
     results = {"kind": "image", "fps": 1.0, "step": 1, "width": w, "height": h, "engine": note,

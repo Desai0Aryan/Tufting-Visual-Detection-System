@@ -142,6 +142,29 @@ def create_app(data_dir=None):
             abort(400, str(exc))
         return jsonify(name=name, saved=unet_video.library_names())
 
+    # ------------------------------------------------------------ pictures: check the detected tufts in the pop-up
+    @app.get("/api/jobs/<jid>/image_tufts")
+    def get_image_tufts(jid):
+        m = job_or_404(jid)
+        if m["kind"] != "image" or not (store.dir(jid) / analysis.IMAGE_TUFTS).is_file():
+            abort(409, "There are no detected tufts to check for this file.")
+        t = analysis.load_image_tufts(store.dir(jid))
+        return jsonify(size=[m["info"]["width"], m["info"]["height"]],
+                       tufts=[{"id": i, "root": x["root"], "tip": x["tip"], "manual": bool(x.get("manual"))}
+                              for i, x in enumerate(t)])
+
+    @app.put("/api/jobs/<jid>/image_tufts")
+    def put_image_tufts(jid):
+        m = job_or_404(jid)
+        if m["kind"] != "image" or not (store.dir(jid) / analysis.IMAGE_TUFTS).is_file():
+            abort(409, "There are no detected tufts to check for this file.")
+        b = request.get_json(silent=True) or {}
+        try:
+            t = analysis.edit_image_tufts(store.dir(jid), remove=b.get("remove", []), add=b.get("add", []))
+        except (ValueError, KeyError, TypeError, IndexError) as exc:
+            abort(400, str(exc) or "Those tufts could not be used.")
+        return jsonify(count=len(t))
+
     @app.get("/api/jobs/<jid>/tuftmap.json")
     def dl_map(jid):
         job_or_404(jid)
@@ -161,9 +184,11 @@ def create_app(data_dir=None):
         if not files:
             abort(400, "No file was received.")
         made, errors = [], []
+        # review=1 (default): find the tufts first, then wait for the person to check them in the pop-up
+        opts = {"review": request.form.get("review", "1").lower() not in ("0", "false", "no", "off")}
         for f in files:
             try:
-                made.append(store.create(f.filename or "upload", lambda p, f=f: f.save(p)))
+                made.append(store.create(f.filename or "upload", lambda p, f=f: f.save(p), opts))
             except ValueError as exc:
                 errors.append({"name": f.filename, "error": str(exc)})
         code = 200 if made else 400
@@ -175,7 +200,8 @@ def create_app(data_dir=None):
 
         def writer(p):
             make_demo_video(p)
-        return jsonify(store.create("demo-wind-tunnel.mp4", writer))
+        review = request.args.get("review", "1").lower() not in ("0", "false", "no", "off")
+        return jsonify(store.create("demo-wind-tunnel.mp4", writer, {"review": review}))
 
     @app.get("/api/jobs/<jid>")
     def job(jid):

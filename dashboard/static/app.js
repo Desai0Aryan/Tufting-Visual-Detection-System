@@ -156,6 +156,7 @@ $("#railToggle").addEventListener("click", () => $("#shell").classList.toggle("r
 function statusText(j) {
   if (j.status === "running") return `Analyzing ${Math.round(j.progress * 100)}%`;
   if (j.status === "queued") return "Waiting";
+  if (j.status === "review") return "Check the tufts";
   if (j.status === "done") return `${j.tufts} tufts`;
   if (j.status === "cancelled") return "Cancelled";
   return "Needs attention";
@@ -222,10 +223,12 @@ async function openJob(id, refresh = false, fromRoute = false) {
   const done = j.status === "done";
   $("#working").hidden = !(j.status === "running" || j.status === "queued");
   $("#failed").hidden = !(j.status === "error" || j.status === "cancelled");
+  $("#reviewPanel").hidden = j.status !== "review";
   $("#tabs").classList.toggle("off", !done);
   $("#dlWrap").hidden = !done;
   $$(".tabpane").forEach(p => (p.hidden = true));
   if (j.status === "running" || j.status === "queued") { stopViewer(); updateWorking(j); return; }
+  if (j.status === "review") { stopViewer(); showReviewPanel(j); return; }
   if (!done) {
     stopViewer(); $("#failMsg").textContent = j.status === "cancelled" ? "You cancelled this analysis." : (j.error || "Something went wrong while analyzing this file.");
     return;
@@ -272,7 +275,7 @@ function updateWorking(j) {
   $("#workImg").src = `/api/jobs/${j.id}/preview.jpg?t=${Date.now() % 1e7}`;
   const p = j.status === "queued" ? 0 : j.progress;
   $("#ringFg").style.strokeDashoffset = String(326.7 * (1 - p)); $("#ringTxt").textContent = Math.round(p * 100) + "%";
-  $("#workTitle").textContent = j.status === "queued" ? "Waiting for its turn" : "Finding tufts";
+  $("#workTitle").textContent = j.status === "queued" ? "Waiting for its turn" : /^Frame \d/.test(j.message || "") ? "Processing every frame" : "Finding tufts";
   $("#workMsg").textContent = j.message || ""; $("#workTufts").textContent = j.tufts || 0; $("#workEta").textContent = eta(j.eta);
 }
 $("#cancelBtn").addEventListener("click", async () => { try { await api(`/jobs/${G.cur}/cancel`, { method: "POST" }); } catch (e) { toast(e.message, true); } });
@@ -730,7 +733,7 @@ roi.cv.addEventListener("pointermove", e => { if (!roi.drag) return; const p = r
 roi.cv.addEventListener("pointerup", () => (roi.drag = null));
 $("#reBtn").addEventListener("click", async () => {
   if (!confirm("Analyze this file again with these settings? The current results are replaced.")) return;
-  try { await api(`/jobs/${G.cur}/reanalyze`, { json: { polarity: $("#optPol").value, size: $("#optSize").value, step: Number($("#optStep").value), engine: $("#optEngine").value, tracking: $("#optTrack").value, weights: $("#optWeights").value, map_name: $("#optMapName").value, map_mode: "build", roi: G.roi } }); G.loadedId = null; await pollOnce(); }
+  try { await api(`/jobs/${G.cur}/reanalyze`, { json: { polarity: $("#optPol").value, size: $("#optSize").value, step: Number($("#optStep").value), engine: $("#optEngine").value, tracking: $("#optTrack").value, weights: $("#optWeights").value, map_name: $("#optMapName").value, map_mode: "build", review: true, roi: G.roi } }); G.loadedId = null; await pollOnce(); }
   catch (e) { toast(e.message, true); }
 });
 /* ---- tuft map review (trained model) */
@@ -793,8 +796,216 @@ $("#mapSave").addEventListener("click", async () => {
 });
 $("#mapApply").addEventListener("click", async () => {
   if (!confirm("Analyze again with this tuft map? The current results are replaced.")) return;
-  try { await commitMap(); await api(`/jobs/${G.cur}/reanalyze`, { json: { map_mode: "keep", map_name: "", tracking: "map", engine: $("#optEngine").value, weights: $("#optWeights").value, step: Number($("#optStep").value) } }); G.loadedId = null; await pollOnce(); }
+  try { await commitMap(); await api(`/jobs/${G.cur}/reanalyze`, { json: { map_mode: "keep", review: false, map_name: "", tracking: "map", engine: $("#optEngine").value, weights: $("#optWeights").value, step: Number($("#optStep").value) } }); G.loadedId = null; await pollOnce(); }
   catch (e) { setMsg("#mapMsg", e.message, "err"); }
+});
+
+/* ---------------------------------------------------------------- the pop-up: check the tufts, then process every frame */
+const RV = { jid: null, kind: "map", map: null, tufts: null, img: new Image(), W: 1, H: 1, add: [], remove: new Set(), flip: false, mode: "add",
+  hist: [], zoom: 1, cx: 0, cy: 0, drag: null, hover: null, dismissed: new Set(), busy: false };
+const rvDlg = $("#reviewDlg"), rvCv = $("#rvCv"), rvStage = $("#rvStage");
+function showReviewPanel(j) {
+  $("#reviewThumb").src = `/api/jobs/${j.id}/first_frame.jpg`;
+  $("#reviewPanelTxt").textContent = `${j.tufts} tufts were found. Remove wrong ones and add missed ones, then process ${j.kind === "video" ? "every frame" : "the picture"}.`;
+  if (!rvDlg.open && !RV.dismissed.has(j.id)) openReview(j.id);
+}
+$("#reviewOpen").addEventListener("click", () => openReview(G.cur));
+$("#reviewDel").addEventListener("click", async () => { try { await api(`/jobs/${G.cur}`, { method: "DELETE" }); G.jobs = G.jobs.filter(k => k.id !== G.cur); showHome(); renderRail(); } catch (e) { toast(e.message, true); } });
+async function openReview(id) {
+  const j = jobById(id); if (!j || rvDlg.open) return;
+  Object.assign(RV, { jid: id, kind: j.kind === "video" ? "map" : "image", add: [], remove: new Set(), flip: false, hist: [], mode: "add", map: null, tufts: null, busy: false });
+  setRvMode("add"); setMsg("#rvMsg", ""); $("#rvName").value = ""; $("#rvFlip").classList.remove("on");
+  $("#rvStep").value = "1"; $("#rvTitle").textContent = j.kind === "video" ? "Check the tufts before processing" : "Check the tufts in this picture";
+  $("#rvNameWrap").hidden = $("#rvFlip").hidden = j.kind !== "video"; $("#rvStep").closest("label").hidden = j.kind !== "video";
+  $("#rvGo").textContent = j.kind === "video" ? "Process all frames" : "Process picture"; $("#rvGo").disabled = true;
+  $("#rvSub").textContent = "Loading the tufts…";
+  rvDlg.showModal();
+  try {
+    if (RV.kind === "map") {
+      const r = await api(`/jobs/${id}/map`); if (!r.map) throw new Error("No tuft map was found for this video.");
+      RV.map = r.map; RV.W = r.map.size[0]; RV.H = r.map.size[1]; $("#rvFlip").hidden = !r.map.can_flip;
+      await rvLoadImage(`/api/jobs/${id}/map_ref.jpg?v=${Date.now()}`);
+      G.status = G.status || {}; G.status.maps = r.saved;
+    } else {
+      const r = await api(`/jobs/${id}/image_tufts`); RV.tufts = r.tufts; RV.W = r.size[0]; RV.H = r.size[1];
+      await rvLoadImage(`/api/jobs/${id}/first_frame.jpg`);
+    }
+  } catch (e) { rvDlg.close(); toast(e.message, true); return; }
+  RV.zoom = 1; rvUpdate(); rvHint(); $("#rvGo").disabled = false; rvResize();
+}
+function rvLoadImage(url) { return new Promise((res, rej) => { RV.img.onload = () => res(); RV.img.onerror = () => rej(new Error("The first picture could not be loaded.")); RV.img.src = url; }); }
+function rvHint() {
+  $("#rvHint").textContent = RV.kind === "map"
+    ? "Each dot is the taped end of one tuft. Add tufts: click a missed tuft’s taped end (drag to move the picture). Remove tufts: click a dot, or drag a box around many. Scroll to zoom, right-drag to move. Keys: A add, R remove, Z undo."
+    : "Add tufts: click a missed tuft, or drag from its taped end to its free end. Remove tufts: click a tuft, or drag a box around many. Scroll to zoom, right-drag to move. Keys: A add, R remove, Z undo.";
+}
+const rvItems = () => RV.kind === "map" ? RV.map.anchors : RV.tufts;
+const rvCount = () => rvItems().length - RV.remove.size + RV.add.length;
+function rvUpdate() {
+  const n = rvCount(); $("#rvCount").textContent = `${n} tuft${n === 1 ? "" : "s"}`;
+  $("#rvSub").textContent = RV.kind === "map" ? "Green dots are tufts the model found in most frames, yellow ones in fewer (check those), blue ones you added. Red rings will be removed."
+    : "Green lines are the tufts the model found (the dot is the taped end), blue ones you added. Red ones will be removed.";
+  $("#rvUndo").disabled = !RV.hist.length; rvDraw();
+}
+function rvSnap() { RV.hist.push({ add: RV.add.map(a => a.slice ? a.slice() : { ...a }), remove: [...RV.remove], flip: RV.flip }); if (RV.hist.length > 200) RV.hist.shift(); }
+function rvUndo() { const h = RV.hist.pop(); if (!h) return; RV.add = h.add; RV.remove = new Set(h.remove); RV.flip = h.flip; $("#rvFlip").classList.toggle("on", RV.flip); rvUpdate(); }
+function setRvMode(m) { RV.mode = m; $$("#rvMode button").forEach(b => b.classList.toggle("on", b.dataset.mode === m)); rvStage.classList.toggle("add", m === "add"); rvStage.classList.toggle("remove", m === "remove"); }
+$$("#rvMode button").forEach(b => b.addEventListener("click", () => setRvMode(b.dataset.mode)));
+$("#rvUndo").addEventListener("click", rvUndo);
+$("#rvFlip").addEventListener("click", () => { rvSnap(); RV.flip = !RV.flip; $("#rvFlip").classList.toggle("on", RV.flip); rvUpdate(); });
+
+/* view: the picture is fitted into the stage, then zoomed around (cx, cy) in picture pixels */
+function rvView() {
+  const { w, h, dpr } = sizeCanvas(rvCv), base = Math.min(w / RV.W, h / RV.H), s = base * RV.zoom;
+  return { w, h, dpr, base, s, ox: w / 2 - RV.cx * s, oy: h / 2 - RV.cy * s };
+}
+function rvClamp() {
+  const v = rvView(), vw = v.w / v.s, vh = v.h / v.s;
+  RV.cx = vw >= RV.W ? RV.W / 2 : Math.max(vw / 2, Math.min(RV.W - vw / 2, RV.cx));
+  RV.cy = vh >= RV.H ? RV.H / 2 : Math.max(vh / 2, Math.min(RV.H - vh / 2, RV.cy));
+}
+function rvResize() { if (!rvDlg.open) return; if (RV.zoom === 1) { RV.cx = RV.W / 2; RV.cy = RV.H / 2; } rvClamp(); rvDraw(); }
+addEventListener("resize", rvResize);
+function rvZoomAt(f, px, py) {
+  const v = rvView(), ix = (px - v.ox) / v.s, iy = (py - v.oy) / v.s;
+  RV.zoom = Math.max(1, Math.min(40, RV.zoom * f)); const s = rvView().s;
+  RV.cx = ix - (px - v.w / 2) / s; RV.cy = iy - (py - v.h / 2) / s; rvClamp(); rvDraw();
+}
+$("#rvIn").addEventListener("click", () => { const v = rvView(); rvZoomAt(1.5, v.w / 2, v.h / 2); });
+$("#rvOut").addEventListener("click", () => { const v = rvView(); rvZoomAt(1 / 1.5, v.w / 2, v.h / 2); });
+$("#rvFit").addEventListener("click", () => { RV.zoom = 1; RV.cx = RV.W / 2; RV.cy = RV.H / 2; rvDraw(); });
+rvCv.addEventListener("wheel", e => { e.preventDefault(); const r = rvCv.getBoundingClientRect(); rvZoomAt(e.deltaY < 0 ? 1.2 : 1 / 1.2, e.clientX - r.left, e.clientY - r.top); }, { passive: false });
+rvCv.addEventListener("contextmenu", e => e.preventDefault());
+
+function rvDraw() {
+  if (!rvDlg.open || !RV.img.naturalWidth || (!RV.map && !RV.tufts)) return;
+  const v = rvView(), c = rvCv.getContext("2d");
+  c.setTransform(v.dpr, 0, 0, v.dpr, 0, 0); c.clearRect(0, 0, v.w, v.h);
+  c.imageSmoothingQuality = "high"; c.drawImage(RV.img, v.ox, v.oy, RV.W * v.s, RV.H * v.s);
+  const P = (x, y) => [v.ox + x * v.s, v.oy + y * v.s], R = Math.max(3.5, Math.min(7, 3 + RV.zoom * 0.6));
+  c.lineCap = "round"; c.lineJoin = "round";
+  const halo = (draw) => { c.strokeStyle = "rgba(0,0,0,.65)"; c.lineWidth = 4.2; draw(); };
+  const dot = (x, y, col, ring) => { const [X, Y] = P(x, y); c.beginPath(); c.arc(X, Y, R, 0, 6.3); halo(() => c.stroke()); c.strokeStyle = col; c.lineWidth = 2.2; if (ring) c.stroke(); else { c.fillStyle = col; c.fill(); c.stroke(); } };
+  const seg = (x1, y1, x2, y2, col) => { const [A, B] = P(x1, y1), [C, D] = P(x2, y2); c.beginPath(); c.moveTo(A, B); c.lineTo(C, D); halo(() => c.stroke()); c.strokeStyle = col; c.lineWidth = 2; c.stroke(); };
+  const GREEN = "#4ade80", YEL = "#fbbf24", CYAN = "#38bdf8", RED = "#ef4444";
+  if (RV.kind === "map") {
+    const m = RV.map, L = m.median_length || 40, fa = Math.atan2(m.flow[1], m.flow[0]) + (RV.flip ? Math.PI : 0);
+    const dir = a => RV.flip ? fa : (a.length > 0 ? -a.angle * Math.PI / 180 : fa);
+    const draw = (a, col, ring) => { const ln = 0.6 * (a.length || L), d = dir(a); seg(a.x, a.y, a.x + Math.cos(d) * ln, a.y + Math.sin(d) * ln, col); dot(a.x, a.y, col, ring); };
+    m.anchors.forEach(a => { const gone = RV.remove.has(a.id); draw(a, gone ? RED : a.manual ? CYAN : a.hits >= 0.5 ? GREEN : YEL, gone); });
+    RV.add.forEach(p => draw({ x: p[0], y: p[1], length: L }, CYAN, false));
+    // the big flow arrow, top left, like the old pop-up window
+    const fx = Math.cos(fa), fy = Math.sin(fa), cx = 64, cy = 64;
+    c.lineWidth = 9; c.strokeStyle = "rgba(0,0,0,.7)"; arrow(c, cx - fx * 36, cy - fy * 36, cx + fx * 36, cy + fy * 36);
+    c.lineWidth = 4; c.strokeStyle = "#22d3ee"; arrow(c, cx - fx * 36, cy - fy * 36, cx + fx * 36, cy + fy * 36);
+    c.font = "700 13px system-ui, sans-serif"; c.textAlign = "center"; c.fillStyle = "#22d3ee"; c.strokeStyle = "rgba(0,0,0,.7)"; c.lineWidth = 3;
+    c.strokeText(RV.flip ? "flow (flipped)" : "flow", cx, 118); c.fillText(RV.flip ? "flow (flipped)" : "flow", cx, 118);
+  } else {
+    const draw = (t, col, ring) => { seg(t.root[0], t.root[1], t.tip[0], t.tip[1], col); dot(t.root[0], t.root[1], col, ring); };
+    RV.tufts.forEach(t => { const gone = RV.remove.has(t.id); draw(t, gone ? RED : t.manual ? CYAN : GREEN, gone); });
+    RV.add.forEach(a => draw(Array.isArray(a) ? rvTypical(a) : a, CYAN, false));
+  }
+  if (RV.drag && RV.drag.box) { const [a, b] = RV.drag.box; c.fillStyle = "rgba(239,68,68,.16)"; c.strokeStyle = RED; c.lineWidth = 1.5; c.setLineDash([6, 4]); c.fillRect(a[0], a[1], b[0] - a[0], b[1] - a[1]); c.strokeRect(a[0], a[1], b[0] - a[0], b[1] - a[1]); c.setLineDash([]); }
+  if (RV.drag && RV.drag.line) { const [a, b] = RV.drag.line; c.strokeStyle = CYAN; c.lineWidth = 2; c.beginPath(); c.moveTo(a[0], a[1]); c.lineTo(b[0], b[1]); c.stroke(); }
+}
+function arrow(c, x1, y1, x2, y2) { const a = Math.atan2(y2 - y1, x2 - x1), h = 13; c.beginPath(); c.moveTo(x1, y1); c.lineTo(x2, y2); c.moveTo(x2, y2); c.lineTo(x2 - h * Math.cos(a - 0.5), y2 - h * Math.sin(a - 0.5)); c.moveTo(x2, y2); c.lineTo(x2 - h * Math.cos(a + 0.5), y2 - h * Math.sin(a + 0.5)); c.stroke(); }
+/** The line a click on a picture would add: the typical length and direction of the detected tufts (the server uses the same rule). */
+function rvTypical(p) {
+  const T = RV.tufts.filter(t => !t.manual); if (!T.length) return { root: p, tip: [p[0] + 40, p[1]] };
+  const L = T.map(t => Math.hypot(t.tip[0] - t.root[0], t.tip[1] - t.root[1])).sort((a, b) => a - b), med = L[L.length >> 1];
+  const vx = T.reduce((s, t) => s + t.tip[0] - t.root[0], 0), vy = T.reduce((s, t) => s + t.tip[1] - t.root[1], 0), n = Math.hypot(vx, vy) || 1;
+  return { root: p, tip: [p[0] + vx / n * med, p[1] + vy / n * med] };
+}
+
+/* mouse / touch */
+function rvPt(e) { const r = rvCv.getBoundingClientRect(), v = rvView(), px = e.clientX - r.left, py = e.clientY - r.top; return { px, py, x: (px - v.ox) / v.s, y: (py - v.oy) / v.s, s: v.s }; }
+function distSeg(px, py, a, b) { const dx = b[0] - a[0], dy = b[1] - a[1], l2 = dx * dx + dy * dy || 1, t = Math.max(0, Math.min(1, ((px - a[0]) * dx + (py - a[1]) * dy) / l2)); return Math.hypot(px - (a[0] + t * dx), py - (a[1] + t * dy)); }
+/** The nearest existing tuft within `reach` screen pixels: {kind: "item"|"added", id|index}. */
+function rvNearest(p, reach) {
+  const r = reach / p.s; let best = null, bd = r;
+  rvItems().forEach(it => {
+    const d = RV.kind === "map" ? Math.hypot(it.x - p.x, it.y - p.y) : Math.min(Math.hypot(it.root[0] - p.x, it.root[1] - p.y), distSeg(p.x, p.y, it.root, it.tip));
+    if (d < bd) { bd = d; best = { kind: "item", id: it.id }; }
+  });
+  RV.add.forEach((a, i) => {
+    const d = RV.kind === "map" ? Math.hypot(a[0] - p.x, a[1] - p.y) : (() => { const t = Array.isArray(a) ? rvTypical(a) : a; return Math.min(Math.hypot(t.root[0] - p.x, t.root[1] - p.y), distSeg(p.x, p.y, t.root, t.tip)); })();
+    if (d < bd) { bd = d; best = { kind: "added", index: i }; }
+  });
+  return best;
+}
+rvCv.addEventListener("pointerdown", e => {
+  if (!RV.map && !RV.tufts) return;
+  rvCv.setPointerCapture(e.pointerId); const p = rvPt(e), right = e.button === 2 || e.button === 1;
+  const v = rvView();
+  if (right || (RV.mode === "add" && RV.kind === "map")) RV.drag = { pan: true, x0: e.clientX, y0: e.clientY, cx: RV.cx, cy: RV.cy, moved: false, down: p, s: v.s, right };
+  else if (RV.mode === "remove") RV.drag = { box: [[p.px, p.py], [p.px, p.py]], down: p, moved: false };
+  else RV.drag = { line: [[p.px, p.py], [p.px, p.py]], down: p, moved: false };
+  if (right) rvStage.classList.add("pan");
+});
+rvCv.addEventListener("pointermove", e => {
+  const d = RV.drag; if (!d) return; const p = rvPt(e);
+  if (Math.hypot(p.px - d.down.px, p.py - d.down.py) > 5) d.moved = true;
+  if (d.pan && d.moved) { RV.cx = d.cx - (e.clientX - d.x0) / d.s; RV.cy = d.cy - (e.clientY - d.y0) / d.s; rvClamp(); rvStage.classList.add("pan"); }
+  else if (d.box) d.box[1] = [p.px, p.py];
+  else if (d.line) d.line[1] = [p.px, p.py];
+  rvDraw();
+});
+rvCv.addEventListener("pointerup", e => {
+  const d = RV.drag; RV.drag = null; rvStage.classList.remove("pan"); if (!d) return;
+  const p = rvPt(e), v = rvView();
+  if (d.pan) { if (!d.moved && !d.right) rvClick(p); rvDraw(); return; }
+  if (d.box && d.moved) {                                      // remove everything inside the box
+    const [a, b] = d.box, x0 = Math.min(a[0], b[0]), x1 = Math.max(a[0], b[0]), y0 = Math.min(a[1], b[1]), y1 = Math.max(a[1], b[1]);
+    const inside = (x, y) => { const X = v.ox + x * v.s, Y = v.oy + y * v.s; return X >= x0 && X <= x1 && Y >= y0 && Y <= y1; };
+    const ids = rvItems().filter(it => !RV.remove.has(it.id) && (RV.kind === "map" ? inside(it.x, it.y) : inside(it.root[0], it.root[1]))).map(it => it.id);
+    const keep = RV.add.filter(a => { const q = RV.kind === "map" ? a : (Array.isArray(a) ? a : a.root); return !inside(q[0], q[1]); });
+    const dropped = RV.add.length - keep.length;
+    if (ids.length || dropped) { rvSnap(); ids.forEach(i => RV.remove.add(i)); RV.add = keep; rvUpdate(); toast(`${ids.length + dropped} tuft${ids.length + dropped === 1 ? "" : "s"} removed.`); }
+    else rvDraw();
+    return;
+  }
+  if (d.line && d.moved && Math.hypot(p.px - d.down.px, p.py - d.down.py) > 12) {   // picture: drag = root to tip
+    rvSnap(); RV.add.push({ root: [d.down.x, d.down.y], tip: [p.x, p.y] }); rvUpdate(); return;
+  }
+  rvClick(p);
+});
+function rvClick(p) {
+  if (p.x < 0 || p.y < 0 || p.x > RV.W || p.y > RV.H) { rvDraw(); return; }
+  const near = rvNearest(p, 12);
+  if (RV.mode === "remove") {
+    if (!near) { rvDraw(); return; }
+    rvSnap(); if (near.kind === "added") RV.add.splice(near.index, 1); else RV.remove.has(near.id) ? RV.remove.delete(near.id) : RV.remove.add(near.id);
+    rvUpdate(); return;
+  }
+  if (near && near.kind === "item" && RV.remove.has(near.id)) { rvSnap(); RV.remove.delete(near.id); rvUpdate(); return; }    // add mode on a removed tuft brings it back
+  if (near) { toast("There is already a tuft here."); return; }
+  rvSnap(); RV.add.push([p.x, p.y]); rvUpdate();
+}
+addEventListener("keydown", e => {
+  if (!rvDlg.open || e.target.matches("input, select, textarea")) return;
+  const k = e.key.toLowerCase();
+  if (k === "a") setRvMode("add"); else if (k === "r") setRvMode("remove"); else if (k === "z") rvUndo(); else if (k === "+" || k === "=") $("#rvIn").click(); else if (k === "-") $("#rvOut").click(); else return;
+  e.preventDefault();
+});
+function rvClose() { if (RV.busy) return; RV.dismissed.add(RV.jid); rvDlg.close(); }
+$("#rvClose").addEventListener("click", rvClose); $("#rvLater").addEventListener("click", rvClose);
+rvDlg.addEventListener("cancel", e => { if (RV.busy) e.preventDefault(); else RV.dismissed.add(RV.jid); });
+$("#rvGo").addEventListener("click", async () => {
+  if (RV.busy) return;
+  if (rvCount() < 1 && !confirm("There are no tufts left. Process anyway?")) return;
+  RV.busy = true; $("#rvGo").disabled = $("#rvLater").disabled = true; setMsg("#rvMsg", "Saving your changes…");
+  try {
+    if (RV.kind === "map") {
+      if (RV.add.length || RV.remove.size || RV.flip) await api(`/jobs/${RV.jid}/map`, { method: "PUT", json: { add: RV.add, remove: [...RV.remove], flip: RV.flip } });
+      const nm = $("#rvName").value.trim(); if (nm) { const r = await api(`/jobs/${RV.jid}/map/save`, { json: { name: nm } }); G.status.maps = r.saved; }
+      await api(`/jobs/${RV.jid}/reanalyze`, { json: { map_mode: "keep", map_name: "", review: false, tracking: "map", step: Number($("#rvStep").value) } });
+    } else {
+      await api(`/jobs/${RV.jid}/image_tufts`, { method: "PUT", json: { remove: [...RV.remove], add: RV.add } });
+      await api(`/jobs/${RV.jid}/reanalyze`, { json: { map_mode: "keep", review: false } });
+    }
+    RV.dismissed.delete(RV.jid); rvDlg.close(); G.loadedId = null; await pollOnce();
+  } catch (e) { setMsg("#rvMsg", e.message, "err"); $("#rvGo").disabled = $("#rvLater").disabled = false; }
+  RV.busy = false;
 });
 async function pollOnce() { const list = await api("/jobs"); G.jobs = list; renderRail(); openJob(G.cur, true, true); }
 

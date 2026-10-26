@@ -32,7 +32,7 @@ class DashboardTests(unittest.TestCase):
         cls.clip = cls.tmp.name + "/clip.mp4"
         make_demo_video(cls.clip, seconds=2.0, fps=12, size=(960, 540))
         with open(cls.clip, "rb") as fh:
-            r = cls.c.post("/api/upload", data={"files": (fh, "clip.mp4")}, content_type="multipart/form-data")
+            r = cls.c.post("/api/upload", data={"files": (fh, "clip.mp4"), "review": "0"}, content_type="multipart/form-data")
         assert r.status_code == 200, r.json
         cls.jid = r.json["jobs"][0]["id"]
         cls.meta = _wait(cls.c, cls.jid)
@@ -118,7 +118,7 @@ class DashboardTests(unittest.TestCase):
     def test_image_is_analysed(self):
         img = cv2.imread("tests/fixtures/Nasa_High_Alpha.jpg")
         ok, buf = cv2.imencode(".png", img)
-        r = self.c.post("/api/upload", data={"files": (io.BytesIO(buf.tobytes()), "pic.png")}, content_type="multipart/form-data")
+        r = self.c.post("/api/upload", data={"files": (io.BytesIO(buf.tobytes()), "pic.png"), "review": "0"}, content_type="multipart/form-data")
         m = _wait(self.c, r.json["jobs"][0]["id"])
         self.assertEqual(m["status"], "done")
         self.assertGreater(m["tufts"], 20)

@@ -66,7 +66,9 @@ def _copy_from_library(name, job_dir):
 class MapRunner:
     """Builds (or loads) the tuft map, then measures frames against it."""
 
-    def __init__(self, video, job_dir, opts, weights, eff_fps, progress, cancelled):
+    def __init__(self, video, job_dir, opts, weights, eff_fps, progress, cancelled, build_only=False):
+        """build_only: stop once the tuft map exists (built, kept or copied from the library), before any frame is
+        measured. The dashboard then shows the map in the pop-up for the person to check."""
         from core.map_pipeline import MapPipeline
         from core.sources import VideoFileSource
         from core.tuft_map import TuftMap, build_map, load_ref
@@ -101,7 +103,7 @@ class MapRunner:
                     if cancelled():
                         from .analysis import Cancelled
                         raise Cancelled()
-                    progress(done=k, total=n, tufts=0, eta=None, fps=0, frac=0.18 * k / n,
+                    progress(done=k, total=n, tufts=0, eta=None, fps=0, frac=(1.0 if build_only else 0.18) * k / n,
                              message=f"Finding where each tuft is anchored ({k} of {n})")
                 try:
                     tmap, ref, scan = build_map(src, det, SAMPLES, MIN_HITS, progress=prog)
@@ -116,6 +118,8 @@ class MapRunner:
                                  "tufted surface, or try the classical detector.")
             self.map = tmap
             self.ref = ref
+            if build_only:
+                return
             self.pipe = MapPipeline(tmap, self.backend, ref, fps=eff_fps)
             first = src.read_at(0)
             if self.pipe.aligner is not None and first is not None:
@@ -149,8 +153,10 @@ def describe(job_dir):
     if tmap is None:
         return None
     return {"size": list(tmap.size), "flow": list(tmap.flow), "can_flip": Path(job_dir, SCAN_FILE).exists(),
+            "median_length": round(float(tmap.median_length()), 1),
             "anchors": [{"id": a.id, "x": round(a.root[0], 1), "y": round(a.root[1], 1), "hits": round(a.hits, 2),
-                         "manual": bool(a.manual)} for a in tmap.anchors]}
+                         "manual": bool(a.manual), "length": round(float(a.length_px), 1),
+                         "angle": round(float(a.angle_deg), 1)} for a in tmap.anchors]}
 
 
 def edit(job_dir, add=(), remove=(), flip=False):

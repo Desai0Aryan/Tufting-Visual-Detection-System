@@ -346,3 +346,29 @@ table.grid { width: 100%; border-collapse: separate; border-spacing: 0; font-siz
 .det-pill.on i { background: #22c55e; box-shadow: 0 0 0 4px rgba(34,197,94,.18); }
 .chip.det.on { color: #15803d; }
 .det-wrap { margin-bottom: 14px; } .det-wrap .det-pill { margin-top: 0; }
+
+/* ---------- tuft check pop-up (add / remove tufts before every frame is processed) ---------- */
+.sdot.review { background: #f5a524; }
+.reviewing { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(260px, 1fr); gap: 22px; align-items: start; }
+.reviewing .work-stage { border-radius: 16px; overflow: hidden; background: #0d141b; }
+.reviewing .work-stage img { display: block; width: 100%; height: auto; }
+.reviewing .work-side { display: flex; flex-direction: column; gap: 10px; }
+.review-dlg { width: min(1180px, 96vw); max-height: 96vh; overflow: auto; }
+.review-dlg .small { font-size: 13.5px; margin: 2px 0 0; }
+.rv-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin: 12px 0 10px; }
+.rv-bar .grow, .rv-foot .grow { flex: 1; }
+.rv-bar .seg button { display: inline-flex; align-items: center; gap: 7px; }
+.rv-bar .k { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
+.rv-bar .k.add { background: #38bdf8; } .rv-bar .k.rem { background: #ef4444; }
+.rv-count { font-weight: 700; font-variant-numeric: tabular-nums; }
+.rv-zoom { display: flex; gap: 6px; } .rv-zoom .icon-btn { width: 34px; height: 34px; font-size: 17px; line-height: 1; }
+.rv-stage { position: relative; height: min(64vh, 700px); border-radius: 14px; overflow: hidden; background: #0d141b; touch-action: none; }
+.rv-stage canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+.rv-stage.add canvas { cursor: crosshair; } .rv-stage.remove canvas { cursor: not-allowed; } .rv-stage.pan canvas { cursor: grabbing; }
+.rv-hint { margin: 8px 2px 0; font-size: 13px; color: var(--ink-3); }
+.rv-foot { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 12px; margin-top: 14px; }
+.rv-field { display: flex; flex-direction: column; gap: 5px; font-size: 13px; color: var(--ink-2); font-weight: 600; }
+.rv-field select, .rv-field input { height: 38px; border-radius: 10px; border: 1px solid var(--line); background: var(--sunken); padding: 0 10px; color: var(--ink); font-weight: 400; min-width: 270px; }
+.rv-msg { margin: 0 4px 9px 0; min-height: 0; }
+.review-dlg .btn:disabled { opacity: .5; pointer-events: none; }
+@media (max-width: 1100px) { .reviewing { grid-template-columns: 1fr; } }

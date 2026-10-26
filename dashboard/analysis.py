@@ -13,6 +13,8 @@ import gzip
 import json
 import math
 import os
+import queue
+import threading
 import time
 from dataclasses import dataclass, asdict
 from pathlib import Path
@@ -37,9 +39,10 @@ class ReviewNeeded(Exception):
     """Raised after the first stage (tuft map / picture detections) so the person can check the tufts in the
     pop-up before every frame is processed. `kind` is "map" (video) or "image"; `count` the tufts proposed."""
 
-    def __init__(self, kind, count):
+    def __init__(self, kind, count, spf=None):
         super().__init__(f"{count} tufts are waiting to be checked")
         self.kind, self.count = kind, int(count)
+        self.spf = spf          # seconds the scan took per frame, used for the "about N min" estimate
 
 
 @dataclass
@@ -257,7 +260,7 @@ def analyze_video(src, out_dir, opts: Options, progress: Callable, cancelled: Ca
         runner = unet_video.MapRunner(src, out_dir, opts, weights, fps / step, progress, cancelled,
                                       build_only=stop_at_map)
         if stop_at_map:
-            raise ReviewNeeded("map", len(runner.map.anchors))
+            raise ReviewNeeded("map", len(runner.map.anchors), getattr(runner, "scan_spf", None))
         note = runner.note
         warnings += runner.warnings
         if roi is not None:
@@ -288,34 +291,113 @@ def analyze_video(src, out_dir, opts: Options, progress: Callable, cancelled: Ca
     video_path = Path(out_dir) / "annotated.mp4"
     cap = cv2.VideoCapture(str(src))
     t0 = time.time()
-    done, idx, tuft_total = 0, -1, 0
     total_proc = math.ceil(n / step) if n else 0
     writer = media.H264Writer(video_path, out_fps, (w, h))
+    tuft_total = 0
+
+    # Three stages run side by side so the model never waits for the disk or the encoder:
+    #   reader thread (decode, skipping unused frames cheaply) -> this thread (model + tuft map) -> writer thread
+    #   (draw arrows, H.264 encode, live preview). Same frames, same order, same numbers as a plain loop.
+    rq, wq = queue.Queue(maxsize=6), queue.Queue(maxsize=6)
+    stop, errors = threading.Event(), []
+
+    def put(q, item):
+        while not stop.is_set():
+            try:
+                q.put(item, timeout=0.2)
+                return True
+            except queue.Full:
+                pass
+        return False
+
+    def read_loop():
+        try:
+            idx = -1
+            while not stop.is_set():
+                if (idx + 1) % step:                    # a frame we skip: decode it, but do not convert it
+                    if not cap.grab():
+                        break
+                    idx += 1
+                    continue
+                ok, frame = cap.read()
+                if not ok:
+                    break
+                idx += 1
+                if not put(rq, (idx, frame)):
+                    return
+        except Exception as exc:
+            errors.append(exc)
+        finally:
+            put(rq, None)
+
+    def write_loop():
+        done = 0
+        try:
+            while True:
+                item = wq.get()
+                if item is None:
+                    return
+                frame, recs, idx = item
+                ann = draw_records(frame, recs, banner=f"t = {idx / fps:6.2f} s    tufts: {len(recs)}")
+                writer.write(ann)
+                done += 1
+                if done == 1 or done % 3 == 0:
+                    el = time.time() - t0
+                    eta = (el / done) * (total_proc - done) if total_proc else None
+                    progress(done=done, total=total_proc, tufts=len(recs), eta=eta, fps=done / max(el, 1e-6),
+                             preview=ann)
+        except Exception as exc:
+            errors.append(exc)
+            stop.set()
+        finally:
+            while True:                                 # never leave the model thread blocked on a full queue
+                try:
+                    wq.get_nowait()
+                except queue.Empty:
+                    break
+
+    rt = threading.Thread(target=read_loop, daemon=True, name="tuft-reader")
+    wt = threading.Thread(target=write_loop, daemon=True, name="tuft-writer")
+    rt.start()
+    wt.start()
+    k = 0
     try:
         while True:
-            ok, frame = cap.read()
-            if not ok:
-                break
-            idx += 1
-            if idx % step:
+            try:
+                item = rq.get(timeout=0.25)
+            except queue.Empty:
+                if cancelled():
+                    raise Cancelled()
+                if errors:
+                    raise errors[0]
                 continue
+            if item is None:
+                break
             if cancelled():
                 raise Cancelled()
-            recs = [_rec(t) for t in process(frame, done, idx / fps)]
+            if errors:
+                raise errors[0]
+            idx, frame = item
+            recs = [_rec(t) for t in process(frame, k, idx / fps)]
             times.append(round(idx / fps, 4))
             frames_out.append(recs)
             tuft_total += len(recs)
-            ann = draw_records(frame, recs, banner=f"t = {idx / fps:6.2f} s    tufts: {len(recs)}")
-            writer.write(ann)
-            done += 1
-            if done == 1 or done % 3 == 0:
-                el = time.time() - t0
-                eta = (el / done) * (total_proc - done) if total_proc else None
-                progress(done=done, total=total_proc, tufts=len(recs), eta=eta, fps=done / max(el, 1e-6),
-                         preview=ann)
+            k += 1
+            if not put(wq, (frame, recs, idx)):
+                break
+        if errors:
+            raise errors[0]
+        put(wq, None)
+        wt.join()
+        if errors:
+            raise errors[0]
     finally:
+        stop.set()
+        rt.join(timeout=5)
+        wt.join(timeout=5)
         cap.release()
         writer.close()
+    done = k
     if not frames_out:
         raise ValueError("No frames could be read from this video.")
 

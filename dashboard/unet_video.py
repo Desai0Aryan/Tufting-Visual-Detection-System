@@ -10,6 +10,7 @@ videos of the same aircraft + camera mount, so tuft numbers stay the same from v
 """
 import pickle
 import shutil
+import time
 from pathlib import Path
 
 import cv2
@@ -105,10 +106,12 @@ class MapRunner:
                         raise Cancelled()
                     progress(done=k, total=n, tufts=0, eta=None, fps=0, frac=(1.0 if build_only else 0.18) * k / n,
                              message=f"Finding where each tuft is anchored ({k} of {n})")
+                t_scan = time.time()
                 try:
                     tmap, ref, scan = build_map(src, det, SAMPLES, MIN_HITS, progress=prog)
                 finally:
                     self.backend.threshold = thr
+                self.scan_spf = (time.time() - t_scan) / max(1, min(SAMPLES, src.frame_count))
                 renumber(tmap)
                 tmap.save(mp, ref)
                 job_dir.joinpath(SCAN_FILE).write_bytes(pickle.dumps(scan))

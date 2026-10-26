@@ -195,7 +195,7 @@ class JobStore:
             stats = fn(src, d, opts, progress, cancelled)
         except ReviewNeeded as r:
             if jid in self.meta:
-                self.update(jid, status="review", progress=0.0, eta=None, tufts=r.count, review_kind=r.kind,
+                self.update(jid, status="review", progress=0.0, eta=None, tufts=r.count, review_kind=r.kind, scan_spf=r.spf,
                             message="Check the tufts, then process all frames")
             return
         except Cancelled:

@@ -815,7 +815,7 @@ async function openReview(id) {
   const j = jobById(id); if (!j || rvDlg.open) return;
   Object.assign(RV, { jid: id, kind: j.kind === "video" ? "map" : "image", add: [], remove: new Set(), flip: false, hist: [], mode: "add", map: null, tufts: null, busy: false });
   setRvMode("add"); setMsg("#rvMsg", ""); $("#rvName").value = ""; $("#rvFlip").classList.remove("on");
-  $("#rvStep").value = "1"; $("#rvTitle").textContent = j.kind === "video" ? "Check the tufts before processing" : "Check the tufts in this picture";
+  rvFillSteps(j); $("#rvTitle").textContent = j.kind === "video" ? "Check the tufts before processing" : "Check the tufts in this picture";
   $("#rvNameWrap").hidden = $("#rvFlip").hidden = j.kind !== "video"; $("#rvStep").closest("label").hidden = j.kind !== "video";
   $("#rvGo").textContent = j.kind === "video" ? "Process all frames" : "Process picture"; $("#rvGo").disabled = true;
   $("#rvSub").textContent = "Loading the tufts…";
@@ -832,6 +832,18 @@ async function openReview(id) {
     }
   } catch (e) { rvDlg.close(); toast(e.message, true); return; }
   RV.zoom = 1; rvUpdate(); rvHint(); $("#rvGo").disabled = false; rvResize();
+}
+/** "About 12 min" from the scan speed (seconds per frame the model needed while building the map). */
+function rvDur(sec) { if (sec < 75) return "about 1 min"; const m = Math.round(sec / 60); return m < 90 ? `about ${m} min` : `about ${(m / 60).toFixed(1)} h`; }
+function rvFillSteps(j) {
+  const n = (j.info && j.info.frames) || 0, spf = j.scan_spf ? j.scan_spf * 1.15 : 0;       // a little extra for drawing and saving
+  const t = st => (spf && n ? ` · ${rvDur(Math.ceil(n / st) * spf)}` : "");
+  const auto = Math.max(1, Math.ceil(n / 600)), want = spf && n ? Math.max(1, Math.ceil((n * spf) / 300)) : 0;
+  const rows = [[1, "Every frame (most detail)"], [2, "Every 2nd frame"], [3, "Every 3rd frame"], [4, "Every 4th frame"], [6, "Every 6th frame"], [8, "Every 8th frame"]];
+  let html = rows.map(([st, lab]) => `<option value="${st}">${lab}${t(st)}</option>`).join("");
+  if (want > 1) html = `<option value="${want}">Fast: about 5 min (every ${want === 2 ? "2nd" : want === 3 ? "3rd" : want + "th"} frame)</option>` + html;
+  html += `<option value="0">Automatic (up to about 600 frames)${t(auto)}</option>`;
+  $("#rvStep").innerHTML = html; $("#rvStep").value = "1";
 }
 function rvLoadImage(url) { return new Promise((res, rej) => { RV.img.onload = () => res(); RV.img.onerror = () => rej(new Error("The first picture could not be loaded.")); RV.img.src = url; }); }
 function rvHint() {

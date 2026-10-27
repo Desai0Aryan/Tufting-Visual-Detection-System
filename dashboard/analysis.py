@@ -50,7 +50,7 @@ class Options:
     engine: str = "auto"        # auto / classical / unet
     polarity: str = "auto"      # auto / light / dark  (colour of the tufts against the surface)
     size: str = "auto"          # auto / small / large (multiplies the tuft length limits)
-    step: int = 0               # analyse every Nth frame; 0 = automatic
+    step: int = 1               # analyse every Nth frame; 0 = automatic
     roi: Optional[list] = None  # [x, y, w, h] in video pixels, or None for the whole picture
     weights: str = ""           # path to a model (.pt); empty = find one automatically
     tracking: str = "map"       # map = camera fixed on the surface (tuft map, most accurate); free = any camera

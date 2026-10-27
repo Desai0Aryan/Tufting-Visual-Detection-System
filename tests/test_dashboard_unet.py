@@ -79,6 +79,8 @@ class UNetPathTests(unittest.TestCase):
         st = self.meta["stats"]
         self.assertEqual(st["engine_kind"], "unet")
         self.assertEqual(st["tracking"], "map")
+        self.assertEqual(st["step"], 1)
+        self.assertEqual(st["frames"], self.meta["info"]["frames"])
         self.assertIn("U-Net", st["engine"])
         self.assertEqual(st["warnings"], [])
         self.assertGreater(st["tufts_total"], 10)

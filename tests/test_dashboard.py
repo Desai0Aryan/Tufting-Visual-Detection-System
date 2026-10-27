@@ -134,6 +134,8 @@ class OptionTests(unittest.TestCase):
     def test_options_are_sanitised(self):
         o = analysis.Options.from_dict({"engine": "x", "polarity": "y", "step": "-3", "roi": [1, 2, 3, 4]})
         self.assertEqual((o.engine, o.polarity, o.step, o.roi), ("auto", "auto", 0, None))
+        self.assertEqual(analysis.Options().step, 1)
+        self.assertEqual(analysis.Options.from_dict({"step": 0}).step, 0)
         self.assertEqual(analysis.Options.from_dict({"roi": [10, 10, 200, 100]}).roi, [10, 10, 200, 100])
 
     def test_classical_settings_scale_with_picture_size(self):

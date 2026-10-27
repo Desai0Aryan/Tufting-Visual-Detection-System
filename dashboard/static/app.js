@@ -931,16 +931,16 @@ function rvTypical(p) {
 
 /* mouse / touch */
 function rvPt(e) { const r = rvCv.getBoundingClientRect(), v = rvView(), px = e.clientX - r.left, py = e.clientY - r.top; return { px, py, x: (px - v.ox) / v.s, y: (py - v.oy) / v.s, s: v.s }; }
-function distSeg(px, py, a, b) { const dx = b[0] - a[0], dy = b[1] - a[1], l2 = dx * dx + dy * dy || 1, t = Math.max(0, Math.min(1, ((px - a[0]) * dx + (py - a[1]) * dy) / l2)); return Math.hypot(px - (a[0] + t * dx), py - (a[1] + t * dy)); }
+function rvDistSeg(px, py, a, b) { const dx = b[0] - a[0], dy = b[1] - a[1], l2 = dx * dx + dy * dy || 1, t = Math.max(0, Math.min(1, ((px - a[0]) * dx + (py - a[1]) * dy) / l2)); return Math.hypot(px - (a[0] + t * dx), py - (a[1] + t * dy)); }
 /** The nearest existing tuft within `reach` screen pixels: {kind: "item"|"added", id|index}. */
 function rvNearest(p, reach) {
   const r = reach / p.s; let best = null, bd = r;
   rvItems().forEach(it => {
-    const d = RV.kind === "map" ? Math.hypot(it.x - p.x, it.y - p.y) : Math.min(Math.hypot(it.root[0] - p.x, it.root[1] - p.y), distSeg(p.x, p.y, it.root, it.tip));
+    const d = RV.kind === "map" ? Math.hypot(it.x - p.x, it.y - p.y) : Math.min(Math.hypot(it.root[0] - p.x, it.root[1] - p.y), rvDistSeg(p.x, p.y, it.root, it.tip));
     if (d < bd) { bd = d; best = { kind: "item", id: it.id }; }
   });
   RV.add.forEach((a, i) => {
-    const d = RV.kind === "map" ? Math.hypot(a[0] - p.x, a[1] - p.y) : (() => { const t = Array.isArray(a) ? rvTypical(a) : a; return Math.min(Math.hypot(t.root[0] - p.x, t.root[1] - p.y), distSeg(p.x, p.y, t.root, t.tip)); })();
+    const d = RV.kind === "map" ? Math.hypot(a[0] - p.x, a[1] - p.y) : (() => { const t = Array.isArray(a) ? rvTypical(a) : a; return Math.min(Math.hypot(t.root[0] - p.x, t.root[1] - p.y), rvDistSeg(p.x, p.y, t.root, t.tip)); })();
     if (d < bd) { bd = d; best = { kind: "added", index: i }; }
   });
   return best;
